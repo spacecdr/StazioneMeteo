@@ -1,0 +1,2303 @@
+#include <Arduino.h>
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
+#include <LiquidCrystal.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WebServer.h>
+#include <ESPmDNS.h>
+#include <Update.h>
+#include <Preferences.h>
+#include <Tone32.h>
+#define DHT_SENSOR_PIN 32
+#define DHT_SENSOR_TYPE DHT11
+#define BUTTON4 15
+#define BUTTON3 02
+#define BUTTON2 00
+#define BUTTON1 04
+int color[] = {23,19,18};
+int colbuf[] = {0,0,0};
+const char* host = "StazioneMeteo";
+const char* ntpServer = "time.windows.com";
+const long  gmtOffset_sec = 0;
+const int   daylightOffset_sec = 7200;
+bool pressed = false;
+bool scan = false;
+bool songlist = false;
+bool conn = false;
+int song = 0;
+int n;
+int sel;
+int pos = 0;
+int wpsw = 0;
+String ssid;
+String psw;
+String alfa = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!\"#$%&'()*+,-./:;<=>?@";
+
+const int led = 22;
+unsigned long previousMillis = 0;
+const long interval = 1000;
+int ledState = LOW;
+
+Preferences preferences;
+WebServer server(80);
+
+DHT dht_sensor(DHT_SENSOR_PIN, DHT_SENSOR_TYPE);
+LiquidCrystal lcd(12, 27, 14, 26, 25, 33);
+
+
+const char* loginIndex =
+ "<form name='loginForm'>"
+    "<table width='20%' bgcolor='A09F9F' align='center'>"
+        "<tr>"
+            "<td colspan=2>"
+                "<center><font size=4><b>ESP32 Login Page</b></font></center>"
+                "<br>"
+            "</td>"
+            "<br>"
+            "<br>"
+        "</tr>"
+        "<td>Username:</td>"
+        "<td><input type='text' size=25 name='userid'><br></td>"
+        "</tr>"
+        "<br>"
+        "<br>"
+        "<tr>"
+            "<td>Password:</td>"
+            "<td><input type='Password' size=25 name='pwd'><br></td>"
+            "<br>"
+            "<br>"
+        "</tr>"
+        "<tr>"
+            "<td><input type='submit' onclick='check(this.form)' value='Login'></td>"
+        "</tr>"
+    "</table>"
+"</form>"
+"<script>"
+    "function check(form)"
+    "{"
+    "if(form.userid.value=='admin' && form.pwd.value=='admin')"
+    "{"
+    "window.open('/serverIndex')"
+    "}"
+    "else"
+    "{"
+    " alert('Error Password or Username')/*displays error message*/"
+    "}"
+    "}"
+"</script>";
+
+/*
+ * Server Index Page
+ */
+
+const char* serverIndex =
+"<script src='https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js'></script>"
+"<form method='POST' action='#' enctype='multipart/form-data' id='upload_form'>"
+   "<input type='file' name='update'>"
+        "<input type='submit' value='Update'>"
+    "</form>"
+ "<div id='prg'>progress: 0%</div>"
+ "<script>"
+  "$('form').submit(function(e){"
+  "e.preventDefault();"
+  "var form = $('#upload_form')[0];"
+  "var data = new FormData(form);"
+  " $.ajax({"
+  "url: '/update',"
+  "type: 'POST',"
+  "data: data,"
+  "contentType: false,"
+  "processData:false,"
+  "xhr: function() {"
+  "var xhr = new window.XMLHttpRequest();"
+  "xhr.upload.addEventListener('progress', function(evt) {"
+  "if (evt.lengthComputable) {"
+  "var per = evt.loaded / evt.total;"
+  "$('#prg').html('progress: ' + Math.round(per*100) + '%');"
+  "}"
+  "}, false);"
+  "return xhr;"
+  "},"
+  "success:function(d, s) {"
+  "console.log('success!')"
+ "},"
+ "error: function (a, b, c) {"
+ "}"
+ "});"
+ "});"
+ "</script>";
+
+void goToDeepSleep()
+{
+  btStop();
+ // adc_power_off();
+ Serial.println("Vado in sospensione...");
+  esp_deep_sleep_start();
+}
+
+String printLocalTime(){
+  struct tm timeinfo;
+  char buffer[20];
+  if(!getLocalTime(&timeinfo)){
+    return "NTP non contattato";
+  } else {
+    sprintf(buffer,"%02d/%02d/%04d %02d:%02d:%02d",timeinfo.tm_mday,timeinfo.tm_mon+1,(1900+timeinfo.tm_year),timeinfo.tm_hour,timeinfo.tm_min,timeinfo.tm_sec);
+    return (String)buffer;
+  }
+}
+
+void lcdprint(String var)
+{
+  lcd.print(var.substring(0,20));
+  for(int n = 0; n < 20-(var.substring(0,20).length()); n++)
+        {
+                lcd.print(" ");
+        }
+}
+
+void clearLCDLine(int line)
+{
+        lcd.setCursor(0,line);
+        for(int n = 0; n < 20; n++)
+        {
+                lcd.print(" ");
+        }
+}
+
+void colora(int val1, int val2, int val3){
+      digitalWrite(color[0], val1);
+      digitalWrite(color[1], val2);
+      digitalWrite(color[2], val3);
+}
+
+void collega(String ssid,String psw){
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid.c_str(), psw.c_str());
+    while (WiFi.status() != WL_CONNECTED) {
+      colora(1,0,0);
+      delay(500);
+    }
+    if ( WiFi.status() == WL_CONNECTED ) {
+      colora(0,1,0);
+      configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+       if (!MDNS.begin(host)) {
+          while (1) {
+            delay(1000);
+          }
+        }
+
+        server.on("/", HTTP_GET, []() {
+          server.sendHeader("Connection", "close");
+          server.send(200, "text/html", loginIndex);
+        });
+        server.on("/serverIndex", HTTP_GET, []() {
+          server.sendHeader("Connection", "close");
+          server.send(200, "text/html", serverIndex);
+        });
+
+        server.on("/update", HTTP_POST, []() {
+          server.sendHeader("Connection", "close");
+          server.send(200, "text/plain", (Update.hasError()) ? "FAIL" : "OK");
+          ESP.restart();
+        }, []() {
+          HTTPUpload& upload = server.upload();
+          if (upload.status == UPLOAD_FILE_START) {
+            lcd.setCursor(0,2);
+            lcdprint("Aggiornamento OTA");
+            lcd.setCursor(0,3);
+            lcdprint("in corso...");
+            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+              Update.printError(Serial);
+            }
+          } else if (upload.status == UPLOAD_FILE_WRITE) {
+            if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+              Update.printError(Serial);
+            }
+          } else if (upload.status == UPLOAD_FILE_END) {
+            if (Update.end(true)) {
+            } else {
+              Update.printError(Serial);
+            }
+          }
+        });
+        server.begin();
+      }
+}
+
+
+#define NOTE_B0  31
+#define NOTE_C1  33
+#define NOTE_CS1 35
+#define NOTE_D1  37
+#define NOTE_DS1 39
+#define NOTE_E1  41
+#define NOTE_F1  44
+#define NOTE_FS1 46
+#define NOTE_G1  49
+#define NOTE_GS1 52
+#define NOTE_A1  55
+#define NOTE_AS1 58
+#define NOTE_B1  62
+#define NOTE_C2  65
+#define NOTE_CS2 69
+#define NOTE_D2  73
+#define NOTE_DS2 78
+#define NOTE_E2  82
+#define NOTE_F2  87
+#define NOTE_FS2 93
+#define NOTE_G2  98
+#define NOTE_GS2 104
+#define NOTE_A2  110
+#define NOTE_AS2 117
+#define NOTE_B2  123
+#define NOTE_C3  131
+#define NOTE_CS3 139
+#define NOTE_D3  147
+#define NOTE_DS3 156
+#define NOTE_E3  165
+#define NOTE_F3  175
+#define NOTE_FS3 185
+#define NOTE_G3  196
+#define NOTE_GS3 208
+#define NOTE_A3  220
+#define NOTE_AS3 233
+#define NOTE_B3  247
+#define NOTE_C4  262
+#define NOTE_CS4 277
+#define NOTE_D4  294
+#define NOTE_DS4 311
+#define NOTE_E4  330
+#define NOTE_F4  349
+#define NOTE_FS4 370
+#define NOTE_G4  392
+#define NOTE_GS4 415
+#define NOTE_A4  440
+#define NOTE_AS4 466
+#define NOTE_B4  494
+#define NOTE_C5  523
+#define NOTE_CS5 554
+#define NOTE_D5  587
+#define NOTE_DS5 622
+#define NOTE_E5  659
+#define NOTE_F5  698
+#define NOTE_FS5 740
+#define NOTE_G5  784
+#define NOTE_GS5 831
+#define NOTE_A5  880
+#define NOTE_AS5 932
+#define NOTE_B5  988
+#define NOTE_C6  1047
+#define NOTE_CS6 1109
+#define NOTE_D6  1175
+#define NOTE_DS6 1245
+#define NOTE_E6  1319
+#define NOTE_F6  1397
+#define NOTE_FS6 1480
+#define NOTE_G6  1568
+#define NOTE_GS6 1661
+#define NOTE_A6  1760
+#define NOTE_AS6 1865
+#define NOTE_B6  1976
+#define NOTE_C7  2093
+#define NOTE_CS7 2217
+#define NOTE_D7  2349
+#define NOTE_DS7 2489
+#define NOTE_E7  2637
+#define NOTE_F7  2794
+#define NOTE_FS7 2960
+#define NOTE_G7  3136
+#define NOTE_GS7 3322
+#define NOTE_A7  3520
+#define NOTE_AS7 3729
+#define NOTE_B7  3951
+#define NOTE_C8  4186
+#define NOTE_CS8 4435
+#define NOTE_D8  4699
+#define NOTE_DS8 4978
+#define REST      0
+
+#define NUMELEMENTS(x) (sizeof(x) / sizeof(x[0]))
+
+int melody0[] = {
+  NOTE_B4,-4, NOTE_E5,-4, NOTE_B4,-4, NOTE_E5,-4,
+  NOTE_B4,8,  NOTE_E5,-4, NOTE_B4,8, REST,8,  NOTE_AS4,8, NOTE_B4,8,
+  NOTE_B4,8,  NOTE_AS4,8, NOTE_B4,8, NOTE_A4,8, REST,8, NOTE_GS4,8, NOTE_A4,8, NOTE_G4,8,
+  NOTE_G4,4,  NOTE_E4,-2,
+  NOTE_B4,-4, NOTE_E5,-4, NOTE_B4,-4, NOTE_E5,-4,
+  NOTE_B4,8,  NOTE_E5,-4, NOTE_B4,8, REST,8,  NOTE_AS4,8, NOTE_B4,8,
+  NOTE_A4,-4, NOTE_A4,-4, NOTE_GS4,8, NOTE_A4,-4,
+  NOTE_D5,8,  NOTE_C5,-4, NOTE_B4,-4, NOTE_A4,-4,
+  NOTE_B4,-4, NOTE_E5,-4, NOTE_B4,-4, NOTE_E5,-4,
+  NOTE_B4,8,  NOTE_E5,-4, NOTE_B4,8, REST,8,  NOTE_AS4,8, NOTE_B4,8,
+  NOTE_D5,4, NOTE_D5,-4, NOTE_B4,8, NOTE_A4,-4,
+  NOTE_G4,-4, NOTE_E4,-2,
+  NOTE_E4, 2, NOTE_G4,2,
+  NOTE_B4, 2, NOTE_D5,2,
+  NOTE_F5, -4, NOTE_E5,-4, NOTE_AS4,8, NOTE_AS4,8, NOTE_B4,4, NOTE_G4,4,
+};
+int melody1[] = {
+  NOTE_A4,-4, NOTE_A4,-4, NOTE_A4,16, NOTE_A4,16, NOTE_A4,16, NOTE_A4,16, NOTE_F4,8, REST,8,
+  NOTE_A4,-4, NOTE_A4,-4, NOTE_A4,16, NOTE_A4,16, NOTE_A4,16, NOTE_A4,16, NOTE_F4,8, REST,8,
+  NOTE_A4,4, NOTE_A4,4, NOTE_A4,4, NOTE_F4,-8, NOTE_C5,16,
+  NOTE_A4,4, NOTE_F4,-8, NOTE_C5,16, NOTE_A4,2,//4
+  NOTE_E5,4, NOTE_E5,4, NOTE_E5,4, NOTE_F5,-8, NOTE_C5,16,
+  NOTE_A4,4, NOTE_F4,-8, NOTE_C5,16, NOTE_A4,2,
+  NOTE_A5,4, NOTE_A4,-8, NOTE_A4,16, NOTE_A5,4, NOTE_GS5,-8, NOTE_G5,16, //7
+  NOTE_DS5,16, NOTE_D5,16, NOTE_DS5,8, REST,8, NOTE_A4,8, NOTE_DS5,4, NOTE_D5,-8, NOTE_CS5,16,
+  NOTE_C5,16, NOTE_B4,16, NOTE_C5,16, REST,8, NOTE_F4,8, NOTE_GS4,4, NOTE_F4,-8, NOTE_A4,-16,//9
+  NOTE_C5,4, NOTE_A4,-8, NOTE_C5,16, NOTE_E5,2,
+  NOTE_A5,4, NOTE_A4,-8, NOTE_A4,16, NOTE_A5,4, NOTE_GS5,-8, NOTE_G5,16, //7
+  NOTE_DS5,16, NOTE_D5,16, NOTE_DS5,8, REST,8, NOTE_A4,8, NOTE_DS5,4, NOTE_D5,-8, NOTE_CS5,16,
+  NOTE_C5,16, NOTE_B4,16, NOTE_C5,16, REST,8, NOTE_F4,8, NOTE_GS4,4, NOTE_F4,-8, NOTE_A4,-16,//9
+  NOTE_A4,4, NOTE_F4,-8, NOTE_C5,16, NOTE_A4,2,
+};
+int melody2[] = {  REST, 2, NOTE_D4, 4,
+  NOTE_G4, -4, NOTE_AS4, 8, NOTE_A4, 4,
+  NOTE_G4, 2, NOTE_D5, 4,
+  NOTE_C5, -2,
+  NOTE_A4, -2,
+  NOTE_G4, -4, NOTE_AS4, 8, NOTE_A4, 4,
+  NOTE_F4, 2, NOTE_GS4, 4,
+  NOTE_D4, -1,
+  NOTE_D4, 4,
+  NOTE_G4, -4, NOTE_AS4, 8, NOTE_A4, 4, //10
+  NOTE_G4, 2, NOTE_D5, 4,
+  NOTE_F5, 2, NOTE_E5, 4,
+  NOTE_DS5, 2, NOTE_B4, 4,
+  NOTE_DS5, -4, NOTE_D5, 8, NOTE_CS5, 4,
+  NOTE_CS4, 2, NOTE_B4, 4,
+  NOTE_G4, -1,
+  NOTE_AS4, 4,
+  NOTE_D5, 2, NOTE_AS4, 4,//18
+  NOTE_D5, 2, NOTE_AS4, 4,
+  NOTE_DS5, 2, NOTE_D5, 4,
+  NOTE_CS5, 2, NOTE_A4, 4,
+  NOTE_AS4, -4, NOTE_D5, 8, NOTE_CS5, 4,
+  NOTE_CS4, 2, NOTE_D4, 4,
+  NOTE_D5, -1,
+  REST,4, NOTE_AS4,4,
+  NOTE_D5, 2, NOTE_AS4, 4,//26
+  NOTE_D5, 2, NOTE_AS4, 4,
+  NOTE_F5, 2, NOTE_E5, 4,
+  NOTE_DS5, 2, NOTE_B4, 4,
+  NOTE_DS5, -4, NOTE_D5, 8, NOTE_CS5, 4,
+  NOTE_CS4, 2, NOTE_AS4, 4,
+  NOTE_G4, -1,
+};
+int melody3[] = {  NOTE_AS4,8, NOTE_AS4,8, NOTE_AS4,8,//1
+  NOTE_F5,2, NOTE_C6,2,
+  NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F6,2, NOTE_C6,4,
+  NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F6,2, NOTE_C6,4,
+  NOTE_AS5,8, NOTE_A5,8, NOTE_AS5,8, NOTE_G5,2, NOTE_C5,8, NOTE_C5,8, NOTE_C5,8,
+  NOTE_F5,2, NOTE_C6,2,
+  NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F6,2, NOTE_C6,4,
+
+  NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F6,2, NOTE_C6,4, //8
+  NOTE_AS5,8, NOTE_A5,8, NOTE_AS5,8, NOTE_G5,2, NOTE_C5,-8, NOTE_C5,16,
+  NOTE_D5,-4, NOTE_D5,8, NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F5,8,
+  NOTE_F5,8, NOTE_G5,8, NOTE_A5,8, NOTE_G5,4, NOTE_D5,8, NOTE_E5,4,NOTE_C5,-8, NOTE_C5,16,
+  NOTE_D5,-4, NOTE_D5,8, NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F5,8,
+
+  NOTE_C6,-8, NOTE_G5,16, NOTE_G5,2, REST,8, NOTE_C5,8,//13
+  NOTE_D5,-4, NOTE_D5,8, NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F5,8,
+  NOTE_F5,8, NOTE_G5,8, NOTE_A5,8, NOTE_G5,4, NOTE_D5,8, NOTE_E5,4,NOTE_C6,-8, NOTE_C6,16,
+  NOTE_F6,4, NOTE_DS6,8, NOTE_CS6,4, NOTE_C6,8, NOTE_AS5,4, NOTE_GS5,8, NOTE_G5,4, NOTE_F5,8,
+  NOTE_C6,1
+
+};
+int melody4[] = {
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,16, NOTE_C4,8, NOTE_C4,16, NOTE_G4,16, NOTE_G4,8, NOTE_G4,16,
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,2,
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,16, NOTE_C4,8, NOTE_C4,16, NOTE_G4,16, NOTE_G4,8, NOTE_G4,16,
+  NOTE_F4,8, NOTE_E4,8, NOTE_D4,8, NOTE_C4,8,
+  NOTE_C4,2,
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,16, NOTE_C4,8, NOTE_C4,16, NOTE_G4,16, NOTE_G4,8, NOTE_G4,16,
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,2,
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,16, NOTE_C4,8, NOTE_C4,16, NOTE_G4,16, NOTE_G4,8, NOTE_G4,16,
+  NOTE_F4,8, NOTE_E4,8, NOTE_D4,8, NOTE_C4,8,
+  NOTE_C4,16, NOTE_D5,8, NOTE_D5,16, NOTE_D5,16, NOTE_D5,8, NOTE_D5,16,
+  NOTE_D5,16, NOTE_D5,8, NOTE_D5,16, NOTE_C5,8, NOTE_E5,-8,
+  NOTE_C5,8, NOTE_C5,16, NOTE_E5,16, NOTE_E5,8, NOTE_C5,16,
+  NOTE_F5,8, NOTE_D5,8, NOTE_D5,8, NOTE_E5,-8,
+  NOTE_C5,8, NOTE_D5,16, NOTE_E5,16, NOTE_D5,8, NOTE_C5,16,
+  NOTE_F5,8, NOTE_F5,8, NOTE_A5,8, NOTE_G5,-8,//21
+  NOTE_G5,8, NOTE_C5,16, NOTE_C5,16, NOTE_C5,8, NOTE_C5,16,
+  NOTE_F5,-8, NOTE_E5,16, NOTE_D5,8, NOTE_C5,4,
+  NOTE_C5,16, NOTE_C5,16, NOTE_C5,16, NOTE_C5,16,
+  NOTE_F5,8, NOTE_F5,16, NOTE_A5,8, NOTE_G5,-8,//25
+  NOTE_G5,8, NOTE_C5,16, NOTE_C5,16, NOTE_C5,8, NOTE_C5,16,
+  NOTE_F5,16, NOTE_E5,8, NOTE_D5,16, NOTE_C5,8, NOTE_E5,-8,
+  NOTE_C5,8, NOTE_D5,16, NOTE_E5,16, NOTE_D5,8, NOTE_C5,16,
+  NOTE_F5,8, NOTE_F5,16, NOTE_A5,8, NOTE_G5,-8,//29
+  NOTE_G5,8, NOTE_C5,16, NOTE_C5,16, NOTE_C5,8, NOTE_C5,16,
+  NOTE_F5,8, NOTE_E5,16, NOTE_D5,8, NOTE_C5,8,
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,16, NOTE_C4,8, NOTE_C4,16, NOTE_G4,16, NOTE_G4,8, NOTE_G4,16,
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,2,
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,16, NOTE_C4,8, NOTE_C4,16, NOTE_G4,16, NOTE_G4,8, NOTE_G4,16,
+  NOTE_F4,8, NOTE_E4,8, NOTE_D4,8, NOTE_C4,-2,
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,16, NOTE_C4,8, NOTE_C4,16, NOTE_G4,16, NOTE_G4,8, NOTE_G4,16,
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,2,
+  NOTE_C5,4, NOTE_G4,8, NOTE_AS4,4, NOTE_A4,8,
+  NOTE_G4,16, NOTE_C4,8, NOTE_C4,16, NOTE_G4,16, NOTE_G4,8, NOTE_G4,16,
+  NOTE_F4,8, NOTE_E4,8, NOTE_D4,8, NOTE_C4,-2,
+  NOTE_C4,16, NOTE_C4,8, NOTE_C4,16, NOTE_E4,16, NOTE_E4,8, NOTE_E4,16,
+  NOTE_F4,16, NOTE_F4,8, NOTE_F4,16, NOTE_FS4,16, NOTE_FS4,8, NOTE_FS4,16,
+  NOTE_G4,8, REST,8, NOTE_AS4,8, NOTE_C5,1,
+};
+int melody5[] = {
+  NOTE_D4, -8, NOTE_G4, 16, NOTE_C5, -4,
+  NOTE_B4, 8, NOTE_G4, -16, NOTE_E4, -16, NOTE_A4, -16,
+  NOTE_D5, 2,
+};
+int melody6[] = {
+  NOTE_G4,8, NOTE_C4,8, NOTE_DS4,16, NOTE_F4,16, NOTE_G4,8, NOTE_C4,8, NOTE_DS4,16, NOTE_F4,16, //1
+  NOTE_G4,8, NOTE_C4,8, NOTE_DS4,16, NOTE_F4,16, NOTE_G4,8, NOTE_C4,8, NOTE_DS4,16, NOTE_F4,16,
+  NOTE_G4,8, NOTE_C4,8, NOTE_E4,16, NOTE_F4,16, NOTE_G4,8, NOTE_C4,8, NOTE_E4,16, NOTE_F4,16,
+  NOTE_G4,8, NOTE_C4,8, NOTE_E4,16, NOTE_F4,16, NOTE_G4,8, NOTE_C4,8, NOTE_E4,16, NOTE_F4,16,
+  NOTE_G4,-4, NOTE_C4,-4,//5
+
+  NOTE_DS4,16, NOTE_F4,16, NOTE_G4,4, NOTE_C4,4, NOTE_DS4,16, NOTE_F4,16, //6
+  NOTE_D4,-1, //7 and 8
+  NOTE_F4,-4, NOTE_AS3,-4,
+  NOTE_DS4,16, NOTE_D4,16, NOTE_F4,4, NOTE_AS3,-4,
+  NOTE_DS4,16, NOTE_D4,16, NOTE_C4,-1, //11 and 12
+  NOTE_G4,-4, NOTE_C4,-4,//5
+  NOTE_DS4,16, NOTE_F4,16, NOTE_G4,4, NOTE_C4,4, NOTE_DS4,16, NOTE_F4,16, //6
+  NOTE_D4,-1, //7 and 8
+  NOTE_F4,-4, NOTE_AS3,-4,
+  NOTE_DS4,16, NOTE_D4,16, NOTE_F4,4, NOTE_AS3,-4,
+  NOTE_DS4,16, NOTE_D4,16, NOTE_C4,-1, //11 and 12
+  NOTE_G4,-4, NOTE_C4,-4,
+  NOTE_DS4,16, NOTE_F4,16, NOTE_G4,4,  NOTE_C4,4, NOTE_DS4,16, NOTE_F4,16,
+  NOTE_D4,-2,//15
+  NOTE_F4,-4, NOTE_AS3,-4,
+  NOTE_D4,-8, NOTE_DS4,-8, NOTE_D4,-8, NOTE_AS3,-8,
+  NOTE_C4,-1,
+  NOTE_C5,-2,
+  NOTE_AS4,-2,
+  NOTE_C4,-2,
+  NOTE_G4,-2,
+  NOTE_DS4,-2,
+  NOTE_DS4,-4, NOTE_F4,-4,
+  NOTE_G4,-1,
+  NOTE_C5,-2,//28
+  NOTE_AS4,-2,
+  NOTE_C4,-2,
+  NOTE_G4,-2,
+  NOTE_DS4,-2,
+  NOTE_DS4,-4, NOTE_D4,-4,
+  NOTE_C5,8, NOTE_G4,8, NOTE_GS4,16, NOTE_AS4,16, NOTE_C5,8, NOTE_G4,8, NOTE_GS4,16, NOTE_AS4,16,
+  NOTE_C5,8, NOTE_G4,8, NOTE_GS4,16, NOTE_AS4,16, NOTE_C5,8, NOTE_G4,8, NOTE_GS4,16, NOTE_AS4,16,
+  REST,4, NOTE_GS5,16, NOTE_AS5,16, NOTE_C6,8, NOTE_G5,8, NOTE_GS5,16, NOTE_AS5,16,
+  NOTE_C6,8, NOTE_G5,16, NOTE_GS5,16, NOTE_AS5,16, NOTE_C6,8, NOTE_G5,8, NOTE_GS5,16, NOTE_AS5,16,
+};
+int melody7[] = {  REST, 4, REST, 8, REST, 8, REST, 8, NOTE_E4, 8, NOTE_A4, 8, NOTE_C5, 8, //1
+  NOTE_B4, 8, NOTE_A4, 8, NOTE_C5, 8, NOTE_A4, 8, NOTE_B4, 8, NOTE_A4, 8, NOTE_F4, 8, NOTE_G4, 8,
+  NOTE_E4, 2, NOTE_E4, 8, NOTE_A4, 8, NOTE_C5, 8,
+  NOTE_B4, 8, NOTE_A4, 8, NOTE_C5, 8, NOTE_A4, 8, NOTE_C5, 8, NOTE_A4, 8, NOTE_E4, 8, NOTE_DS4, 8,
+
+  NOTE_D4, 2, NOTE_D4, 8, NOTE_F4, 8, NOTE_GS4, 8, //5
+  NOTE_B4, 2, NOTE_D4, 8, NOTE_F4, 8, NOTE_GS4, 8,
+  NOTE_A4, 2, NOTE_C4, 8, NOTE_C4, 8, NOTE_G4, 8,
+  NOTE_F4, 8, NOTE_E4, 8, NOTE_G4, 8, NOTE_F4, 8, NOTE_F4, 8, NOTE_E4, 8, NOTE_E4, 8, NOTE_GS4, 8,
+
+  NOTE_A4, 2, REST,8, NOTE_A4, 8, NOTE_A4, 8, NOTE_GS4, 8, //9
+  NOTE_G4, 2, NOTE_B4, 8, NOTE_A4, 8, NOTE_F4, 8,
+  NOTE_E4, 2, NOTE_E4, 8, NOTE_G4, 8, NOTE_E4, 8,
+  NOTE_D4, 2, NOTE_D4, 8, NOTE_D4, 8, NOTE_F4, 8, NOTE_DS4, 8,
+
+  NOTE_E4, 2, REST, 8, NOTE_E4, 8, NOTE_A4, 8, NOTE_C5, 8, //13
+  NOTE_B4, 8, NOTE_A4, 8, NOTE_C5, 8, NOTE_A4, 8, NOTE_B4, 8, NOTE_A4, 8, NOTE_F4, 8, NOTE_G4, 8, //2
+  NOTE_E4, 2, NOTE_E4, 8, NOTE_A4, 8, NOTE_C5, 8,
+  NOTE_B4, 8, NOTE_A4, 8, NOTE_C5, 8, NOTE_A4, 8, NOTE_C5, 8, NOTE_A4, 8, NOTE_E4, 8, NOTE_DS4, 8,
+
+  NOTE_D4, 2, NOTE_D4, 8, NOTE_F4, 8, NOTE_GS4, 8, //5
+  NOTE_B4, 2, NOTE_D4, 8, NOTE_F4, 8, NOTE_GS4, 8,
+  NOTE_A4, 2, NOTE_C4, 8, NOTE_C4, 8, NOTE_G4, 8,
+  NOTE_F4, 8, NOTE_E4, 8, NOTE_G4, 8, NOTE_F4, 8, NOTE_F4, 8, NOTE_E4, 8, NOTE_E4, 8, NOTE_GS4, 8,
+
+  NOTE_A4, 2, REST,8, NOTE_A4, 8, NOTE_A4, 8, NOTE_GS4, 8, //9
+  NOTE_G4, 2, NOTE_B4, 8, NOTE_A4, 8, NOTE_F4, 8,
+  NOTE_E4, 2, NOTE_E4, 8, NOTE_G4, 8, NOTE_E4, 8,
+  NOTE_D4, 2, NOTE_D4, 8, NOTE_D4, 8, NOTE_F4, 8, NOTE_DS4, 8,
+
+  NOTE_E4, 2 //13
+};
+int melody8[] = { REST, 4, NOTE_G5, 4,
+  NOTE_A5, 4, NOTE_AS5, 4,
+  NOTE_A5, 4, NOTE_F5, 4,
+  NOTE_A5, 4, NOTE_G5, 4,
+  REST, 4, NOTE_G5, 4,
+  NOTE_A5, 4, NOTE_AS5, 4,
+  NOTE_C6, 4, NOTE_AS5, 4,
+
+  NOTE_A5, 4, NOTE_G5, 4, //8
+  REST, 4, NOTE_G5, 4,
+  NOTE_A5, 4, NOTE_AS5, 4,
+  NOTE_A5, 4, NOTE_F5, 4,
+  NOTE_A5, 4, NOTE_G5, 4,
+  NOTE_D6, 4, REST, 8, NOTE_C6, 8,
+  REST, 4, NOTE_AS5, 4,
+
+  NOTE_A5, 4, NOTE_AS5, 8, NOTE_C6, 8, //15
+  NOTE_F6, 8, REST, 8, REST, 4,
+  NOTE_G5, 16, NOTE_D5, 16, NOTE_D6, 16, NOTE_D5, 16, NOTE_C6, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16,
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16, NOTE_A5, 16, NOTE_D5, 16, NOTE_G5, 16, NOTE_D5, 16,
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16, NOTE_C6, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16,
+
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_F5, 16, NOTE_D5, 16, NOTE_A5, 16, NOTE_D5, 16, NOTE_G5, 16, NOTE_D5, 16, //20
+  NOTE_G5, 16, NOTE_D5, 16, NOTE_D6, 16, NOTE_D5, 16, NOTE_C6, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16,
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16, NOTE_A5, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16,
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16, NOTE_C6, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16,
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_F5, 16, NOTE_D5, 16, NOTE_A5, 16, NOTE_D5, 16, NOTE_G5, 16, NOTE_D5, 16,
+
+  NOTE_G5, 16, NOTE_D5, 16, NOTE_D6, 16, NOTE_D5, 16, NOTE_C6, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16, //25
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16, NOTE_A5, 16, NOTE_D5, 16, NOTE_G5, 16, NOTE_D5, 16,
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16, NOTE_C6, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16,
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_F5, 16, NOTE_D5, 16, NOTE_A5, 16, NOTE_D5, 16, NOTE_G5, 16, NOTE_D5, 16,
+  NOTE_AS5, 16, NOTE_D5, 16, NOTE_D6, 16, NOTE_D5, 16, NOTE_C6, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16,
+
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16, NOTE_A5, 16, NOTE_D5, 16, NOTE_G5, 16, NOTE_D5, 16,
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16, NOTE_C6, 16, NOTE_D5, 16, NOTE_AS5, 16, NOTE_D5, 16,
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_F5, 16, NOTE_D5, 16, NOTE_A5, 16, NOTE_D5, 16, NOTE_G5, 16, NOTE_D5, 16,
+  NOTE_C6, 16, NOTE_C6, 16, NOTE_F6, 16, NOTE_D6, 8, REST, 16, REST, 8,
+  REST, 4, NOTE_C6, 16, NOTE_AS5, 16,
+
+  NOTE_C6, -8,  NOTE_F6, -8, NOTE_D6, -4, //35
+  NOTE_C6, 8, NOTE_AS5, 8,
+  NOTE_C6, 8, NOTE_F6, 16, NOTE_D6, 8, REST, 16, REST, 8,
+  REST, 4, NOTE_C6, 8, NOTE_D6, 8,
+  NOTE_DS6, -8, NOTE_F6, -8,
+
+  NOTE_D6, -8, REST, 16, NOTE_DS6, 8, REST, 8, //40
+  NOTE_C6, 8, NOTE_F6, 16, NOTE_D6, 8, REST, 16, REST, 8,
+  REST, 4, NOTE_C6, 8, NOTE_AS5, 8,
+  NOTE_C6, -8,  NOTE_F6, -8, NOTE_D6, -4,
+  NOTE_C6, 8, NOTE_AS5, 8,
+
+  NOTE_C6, 8, NOTE_F6, 16, NOTE_D6, 8, REST, 16, REST, 8, //45
+  REST, 4, NOTE_C6, 8, NOTE_D6, 8,
+  NOTE_DS6, -8, NOTE_F6, -8,
+  NOTE_D5, 8, NOTE_FS5, 8, NOTE_F5, 8, NOTE_A5, 8,
+  NOTE_A5, -8, NOTE_G5, -4,
+
+  NOTE_A5, -8, NOTE_G5, -4, //50
+  NOTE_A5, -8, NOTE_G5, -4,
+  NOTE_AS5, 8, NOTE_A5, 8, NOTE_G5, 8, NOTE_F5, 8,
+  NOTE_A5, -8, NOTE_G5, -8, NOTE_D5, 8,
+  NOTE_A5, -8, NOTE_G5, -8, NOTE_D5, 8,
+  NOTE_A5, -8, NOTE_G5, -8, NOTE_D5, 8,
+
+  NOTE_AS5, 4, NOTE_C6, 4, NOTE_A5, 4, NOTE_AS5, 4,
+  NOTE_G5,16, NOTE_D5,16, NOTE_D6,16, NOTE_D5,16, NOTE_C6,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16,//56 //r
+  NOTE_A5,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16, NOTE_A5,16, NOTE_D5,16, NOTE_G5,16, NOTE_D5,16,
+  NOTE_A5,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16, NOTE_C6,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16,
+  NOTE_A5,16, NOTE_D5,16, NOTE_F5,16, NOTE_D5,16, NOTE_A5,16, NOTE_D5,16, NOTE_G5,16, NOTE_D5,16,
+
+  NOTE_G5,16, NOTE_D5,16, NOTE_D6,16, NOTE_D5,16, NOTE_C6,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16,//61
+  NOTE_A5,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16, NOTE_A5,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16,
+  NOTE_A5,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16, NOTE_C6,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16,
+  NOTE_A5,16, NOTE_D5,16, NOTE_F5,16, NOTE_D5,16, NOTE_A5,16, NOTE_D5,16, NOTE_G5,16, NOTE_D5,16,
+  NOTE_G5,16, NOTE_D5,16, NOTE_D6,16, NOTE_D5,16, NOTE_C6,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16,
+
+  NOTE_A5,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16, NOTE_A5,16, NOTE_D5,16, NOTE_G5,16, NOTE_D5,16,//66
+  NOTE_A5,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16, NOTE_C6,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16,
+  NOTE_A5,16, NOTE_D5,16, NOTE_F5,16, NOTE_D5,16, NOTE_A5,16, NOTE_D5,16, NOTE_G5,16, NOTE_D5,16,
+  NOTE_AS5,16, NOTE_D5,16, NOTE_D6,16, NOTE_D5,16, NOTE_C6,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16,
+  NOTE_A5,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16, NOTE_A5,16, NOTE_D5,16, NOTE_G5,16, NOTE_D5,16,
+
+  NOTE_A5,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16, NOTE_C6,16, NOTE_D5,16, NOTE_AS5,16, NOTE_D5,16,//71 //
+  NOTE_A5, 16, NOTE_D5, 16, NOTE_F5, 16, NOTE_D5, 16, NOTE_A5, 8, NOTE_G5, 32, NOTE_A5, 32, NOTE_AS5, 32, NOTE_C6, 32,
+  NOTE_D6, 16, NOTE_G5, 16, NOTE_AS5, 16, NOTE_G5, 16, NOTE_C6, 16, NOTE_G5, 16, NOTE_D6, 16, NOTE_G5, 16,
+  NOTE_C6, 16, NOTE_G5, 16, NOTE_A5, 16, NOTE_G5, 16, NOTE_F6, 16, NOTE_G5, 16, NOTE_D6, 16, NOTE_DS5, 16,
+  NOTE_D6, 4, REST, 4,
+
+  NOTE_C5, 8, REST, 8, NOTE_A4, -16, NOTE_AS4, -16, NOTE_C5, 16, //76
+  NOTE_D6, 16, NOTE_G4, 16, NOTE_AS4, 16, NOTE_G4, 16, NOTE_C5, 16, NOTE_G4, 16, NOTE_D6, 16, NOTE_G4, 16,
+  NOTE_C6, 16, NOTE_F4, 16, NOTE_A4, 16, NOTE_F4, 16, NOTE_F5, 16, NOTE_F4, 16, NOTE_D6, 16, NOTE_DS4, 16,
+  NOTE_D6, 16, REST, 8, NOTE_E4, 16, NOTE_F4, 16,
+
+  //change of key B Major A# C# D# F# G#
+  NOTE_GS4, 8, REST, 8, NOTE_AS4, 8, REST, 8,
+
+  NOTE_DS5, 16, NOTE_GS4, 16, NOTE_B4, 16, NOTE_GS4, 16, NOTE_CS5, 16, NOTE_GS4, 16, NOTE_DS5, 16, NOTE_GS4, 16, //81
+  NOTE_CS5, 16, NOTE_FS4, 16, NOTE_AS4, 16, NOTE_FS4, 16, NOTE_FS5, 16, NOTE_FS4, 16, NOTE_DS5, 16, NOTE_E5, 16,
+  NOTE_D5, 4, REST, 4,
+  NOTE_CS5, 8, REST, 8, NOTE_AS4, -16,  NOTE_B4, -16, NOTE_CS5, 16,
+  NOTE_DS5, 16, NOTE_GS4, 16, NOTE_B4, 16, NOTE_GS4, 16, NOTE_CS5, 16, NOTE_GS4, 16, NOTE_DS5, 16, NOTE_GS4, 16,
+
+  NOTE_CS5, 16, NOTE_FS4, 16, NOTE_AS4, 16, NOTE_FS4, 16, NOTE_FS5, 16, NOTE_FS4, 16, NOTE_DS5, 16, NOTE_E5, 16,
+  NOTE_DS5, 4, REST, 8, NOTE_DS5, 16,  NOTE_E5, 16,
+  NOTE_FS5, 16, NOTE_CS5, 16, NOTE_E5, 16, NOTE_CS4, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_G5, 16, NOTE_AS5, 16,
+  NOTE_GS5, 16, NOTE_DS5, 16, NOTE_DS6, 16, NOTE_DS5, 16, NOTE_CS6, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16,
+
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16, NOTE_AS5, 16, NOTE_DS5, 16, NOTE_GS5, 16, NOTE_DS5, 16, //90
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16, NOTE_CS6, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16,
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_FS5, 16, NOTE_DS5, 16, NOTE_AS5, 16, NOTE_DS5, 16, NOTE_GS5, 16, NOTE_DS5, 16,
+  NOTE_GS5, 16, NOTE_DS5, 16, NOTE_DS6, 16, NOTE_DS5, 16, NOTE_CS6, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16,
+
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16, NOTE_AS5, 16, NOTE_DS5, 16, NOTE_GS5, 16, NOTE_DS5, 16,//94
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16, NOTE_CS6, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16,
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_FS5, 16, NOTE_DS5, 16, NOTE_AS5, 16, NOTE_DS5, 16, NOTE_GS5, 16, NOTE_DS5, 16,
+  NOTE_GS5, 16, NOTE_DS5, 16, NOTE_DS6, 16, NOTE_DS5, 16, NOTE_CS6, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16,
+
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16, NOTE_AS5, 16, NOTE_DS5, 16, NOTE_GS5, 16, NOTE_DS5, 16,//98
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16, NOTE_CS6, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16,
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_FS5, 16, NOTE_DS5, 16, NOTE_AS5, 16, NOTE_DS5, 16, NOTE_GS5, 16, NOTE_DS5, 16,
+  NOTE_GS5, 16, NOTE_DS5, 16, NOTE_DS6, 16, NOTE_DS5, 16, NOTE_CS6, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16,
+
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16, NOTE_AS5, 16, NOTE_DS5, 16, NOTE_GS5, 16, NOTE_DS5, 16,//102
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16, NOTE_CS6, 16, NOTE_DS5, 16, NOTE_B5, 16, NOTE_DS5, 16,
+  NOTE_AS5, 16, NOTE_DS5, 16, NOTE_FS5, 16, NOTE_DS5, 16, NOTE_AS5, 16, NOTE_DS5, 16, NOTE_GS5, 16, NOTE_DS5, 16,
+
+  NOTE_CS6, 8, NOTE_FS6, 16, NOTE_DS6, 8, REST,16, REST,8, //107
+  REST,4, NOTE_CS6, 8, NOTE_B5, 8,
+  NOTE_CS6,-8, NOTE_FS6, -8, NOTE_DS6, -4,
+  NOTE_CS6, 8, NOTE_B5, 8,
+  NOTE_CS6, 8, NOTE_FS6, 16, NOTE_DS6, 8, REST,16, REST,8,
+  REST,4, NOTE_CS6, 8, NOTE_B5, 8,
+  NOTE_E6, -8, NOTE_F6, -8,
+
+  NOTE_DS6,-8, REST,16, NOTE_E6,8, REST,16, REST,16, //112
+  NOTE_CS6, 8, NOTE_FS6, 16, NOTE_DS6, 8, REST,16, REST,8,
+  REST,4, NOTE_CS6, 8, NOTE_B5, 8,
+  NOTE_CS6,-8, NOTE_FS6, -8, NOTE_DS6, -4,
+  NOTE_CS6, 8, NOTE_B5, 8,
+
+  NOTE_CS6, 8, NOTE_FS6, 16, NOTE_DS6, 8, REST,16, REST,8, //117
+  REST,4, NOTE_CS5, 8, NOTE_DS5, 8,
+  NOTE_E5, -8, NOTE_F5, -8,
+  NOTE_DS5, 8, NOTE_G5, 8, NOTE_GS5, 8, NOTE_AS5, 8,
+  NOTE_AS5, -8, NOTE_GS5, -8,
+
+  NOTE_AS5, -8, NOTE_GS5, -8,//122
+  NOTE_AS5, -8, NOTE_GS5, -8,
+  NOTE_B6, 8, NOTE_AS5, 8, NOTE_GS5, 8, NOTE_FS5, 8,
+  NOTE_AS5,-8, NOTE_GS6, -8, NOTE_DS5, 8,
+  NOTE_AS5,-8, NOTE_GS6, -8, NOTE_DS5, 8,
+  NOTE_AS5,-8, NOTE_GS6, -8, NOTE_DS5, 8,
+
+  NOTE_B5,8, NOTE_CS6, 8, NOTE_AS5, 8, NOTE_B5, 8,//128
+  NOTE_GS5,8, REST,8, REST, 16
+
+};
+int melody9[] = {REST,2, NOTE_D5,8, NOTE_B4,4, NOTE_D5,8, //1
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+  REST,8, NOTE_A4,8, NOTE_FS5,8, NOTE_E5,4, NOTE_D5,8,
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+  REST,4, NOTE_D5,8, NOTE_B4,4, NOTE_D5,8,
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+
+  REST,8, NOTE_B4,8, NOTE_B4,8, NOTE_G4,4, NOTE_B4,8, //7
+  NOTE_A4,4, NOTE_B4,8, NOTE_A4,4, NOTE_D4,2,
+  REST,4, NOTE_D5,8, NOTE_B4,4, NOTE_D5,8,
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+  REST,8, NOTE_A4,8, NOTE_FS5,8, NOTE_E5,4, NOTE_D5,8,
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+
+  REST,4, NOTE_D5,8, NOTE_B4,4, NOTE_D5,8, //13
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+  REST,8, NOTE_B4,8, NOTE_B4,8, NOTE_G4,4, NOTE_B4,8,
+  NOTE_A4,4, NOTE_B4,8, NOTE_A4,4, NOTE_D4,8, NOTE_D4,8, NOTE_FS4,8,
+  NOTE_E4,-1,
+  REST,8, NOTE_D4,8, NOTE_E4,8, NOTE_FS4,-1,
+
+  REST,8, NOTE_D4,8, NOTE_D4,8, NOTE_FS4,8, NOTE_F4,-1, //20
+  REST,8, NOTE_D4,8, NOTE_F4,8, NOTE_E4,-1, //end 1
+
+  //repeats from 1
+
+  REST,2, NOTE_D5,8, NOTE_B4,4, NOTE_D5,8, //1
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+  REST,8, NOTE_A4,8, NOTE_FS5,8, NOTE_E5,4, NOTE_D5,8,
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+  REST,4, NOTE_D5,8, NOTE_B4,4, NOTE_D5,8,
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+
+  REST,8, NOTE_B4,8, NOTE_B4,8, NOTE_G4,4, NOTE_B4,8, //7
+  NOTE_A4,4, NOTE_B4,8, NOTE_A4,4, NOTE_D4,2,
+  REST,4, NOTE_D5,8, NOTE_B4,4, NOTE_D5,8,
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+  REST,8, NOTE_A4,8, NOTE_FS5,8, NOTE_E5,4, NOTE_D5,8,
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+
+  REST,4, NOTE_D5,8, NOTE_B4,4, NOTE_D5,8, //13
+  NOTE_CS5,4, NOTE_D5,8, NOTE_CS5,4, NOTE_A4,2,
+  REST,8, NOTE_B4,8, NOTE_B4,8, NOTE_G4,4, NOTE_B4,8,
+  NOTE_A4,4, NOTE_B4,8, NOTE_A4,4, NOTE_D4,8, NOTE_D4,8, NOTE_FS4,8,
+  NOTE_E4,-1,
+  REST,8, NOTE_D4,8, NOTE_E4,8, NOTE_FS4,-1,
+
+  REST,8, NOTE_D4,8, NOTE_D4,8, NOTE_FS4,8, NOTE_F4,-1, //20
+  REST,8, NOTE_D4,8, NOTE_F4,8, NOTE_E4,8, //end 2
+  NOTE_E4,-2, NOTE_A4,8, NOTE_CS5,8,
+  NOTE_FS5,8, NOTE_E5,4, NOTE_D5,8, NOTE_A5,-4,
+
+};
+int melody10[] = { NOTE_FS4,8, REST,8, NOTE_A4,8, NOTE_CS5,8, REST,8,NOTE_A4,8, REST,8, NOTE_FS4,8, //1
+  NOTE_D4,8, NOTE_D4,8, NOTE_D4,8, REST,8, REST,4, REST,8, NOTE_CS4,8,
+  NOTE_D4,8, NOTE_FS4,8, NOTE_A4,8, NOTE_CS5,8, REST,8, NOTE_A4,8, REST,8, NOTE_F4,8,
+  NOTE_E5,-4, NOTE_DS5,8, NOTE_D5,8, REST,8, REST,4,
+
+  NOTE_GS4,8, REST,8, NOTE_CS5,8, NOTE_FS4,8, REST,8,NOTE_CS5,8, REST,8, NOTE_GS4,8, //5
+  REST,8, NOTE_CS5,8, NOTE_G4,8, NOTE_FS4,8, REST,8, NOTE_E4,8, REST,8,
+  NOTE_E4,8, NOTE_E4,8, NOTE_E4,8, REST,8, REST,4, NOTE_E4,8, NOTE_E4,8,
+  NOTE_E4,8, REST,8, REST,4, NOTE_DS4,8, NOTE_D4,8,
+
+  NOTE_CS4,8, REST,8, NOTE_A4,8, NOTE_CS5,8, REST,8,NOTE_A4,8, REST,8, NOTE_FS4,8, //9
+  NOTE_D4,8, NOTE_D4,8, NOTE_D4,8, REST,8, NOTE_E5,8, NOTE_E5,8, NOTE_E5,8, REST,8,
+  REST,8, NOTE_FS4,8, NOTE_A4,8, NOTE_CS5,8, REST,8, NOTE_A4,8, REST,8, NOTE_F4,8,
+  NOTE_E5,2, NOTE_D5,8, REST,8, REST,4,
+
+  NOTE_B4,8, NOTE_G4,8, NOTE_D4,8, NOTE_CS4,4, NOTE_B4,8, NOTE_G4,8, NOTE_CS4,8, //13
+  NOTE_A4,8, NOTE_FS4,8, NOTE_C4,8, NOTE_B3,4, NOTE_F4,8, NOTE_D4,8, NOTE_B3,8,
+  NOTE_E4,8, NOTE_E4,8, NOTE_E4,8, REST,4, REST,4, NOTE_AS4,4,
+  NOTE_CS5,8, NOTE_D5,8, NOTE_FS5,8, NOTE_A5,8, REST,8, REST,4,
+
+  REST,2, NOTE_A3,4, NOTE_AS3,4, //17
+  NOTE_A3,-4, NOTE_A3,8, NOTE_A3,2,
+  REST,4, NOTE_A3,8, NOTE_AS3,8, NOTE_A3,8, NOTE_F4,4, NOTE_C4,8,
+  NOTE_A3,-4, NOTE_A3,8, NOTE_A3,2,
+
+  REST,2, NOTE_B3,4, NOTE_C4,4, //21
+  NOTE_CS4,-4, NOTE_C4,8, NOTE_CS4,2,
+  REST,4, NOTE_CS4,8, NOTE_C4,8, NOTE_CS4,8, NOTE_GS4,4, NOTE_DS4,8,
+  NOTE_CS4,-4, NOTE_DS4,8, NOTE_B3,1,
+
+  NOTE_E4,4, NOTE_E4,4, NOTE_E4,4, REST,8,//25
+
+  //repeats 1-25
+
+  NOTE_FS4,8, REST,8, NOTE_A4,8, NOTE_CS5,8, REST,8,NOTE_A4,8, REST,8, NOTE_FS4,8, //1
+  NOTE_D4,8, NOTE_D4,8, NOTE_D4,8, REST,8, REST,4, REST,8, NOTE_CS4,8,
+  NOTE_D4,8, NOTE_FS4,8, NOTE_A4,8, NOTE_CS5,8, REST,8, NOTE_A4,8, REST,8, NOTE_F4,8,
+  NOTE_E5,-4, NOTE_DS5,8, NOTE_D5,8, REST,8, REST,4,
+
+  NOTE_GS4,8, REST,8, NOTE_CS5,8, NOTE_FS4,8, REST,8,NOTE_CS5,8, REST,8, NOTE_GS4,8, //5
+  REST,8, NOTE_CS5,8, NOTE_G4,8, NOTE_FS4,8, REST,8, NOTE_E4,8, REST,8,
+  NOTE_E4,8, NOTE_E4,8, NOTE_E4,8, REST,8, REST,4, NOTE_E4,8, NOTE_E4,8,
+  NOTE_E4,8, REST,8, REST,4, NOTE_DS4,8, NOTE_D4,8,
+
+  NOTE_CS4,8, REST,8, NOTE_A4,8, NOTE_CS5,8, REST,8,NOTE_A4,8, REST,8, NOTE_FS4,8, //9
+  NOTE_D4,8, NOTE_D4,8, NOTE_D4,8, REST,8, NOTE_E5,8, NOTE_E5,8, NOTE_E5,8, REST,8,
+  REST,8, NOTE_FS4,8, NOTE_A4,8, NOTE_CS5,8, REST,8, NOTE_A4,8, REST,8, NOTE_F4,8,
+  NOTE_E5,2, NOTE_D5,8, REST,8, REST,4,
+
+  NOTE_B4,8, NOTE_G4,8, NOTE_D4,8, NOTE_CS4,4, NOTE_B4,8, NOTE_G4,8, NOTE_CS4,8, //13
+  NOTE_A4,8, NOTE_FS4,8, NOTE_C4,8, NOTE_B3,4, NOTE_F4,8, NOTE_D4,8, NOTE_B3,8,
+  NOTE_E4,8, NOTE_E4,8, NOTE_E4,8, REST,4, REST,4, NOTE_AS4,4,
+  NOTE_CS5,8, NOTE_D5,8, NOTE_FS5,8, NOTE_A5,8, REST,8, REST,4,
+
+  REST,2, NOTE_A3,4, NOTE_AS3,4, //17
+  NOTE_A3,-4, NOTE_A3,8, NOTE_A3,2,
+  REST,4, NOTE_A3,8, NOTE_AS3,8, NOTE_A3,8, NOTE_F4,4, NOTE_C4,8,
+  NOTE_A3,-4, NOTE_A3,8, NOTE_A3,2,
+
+  REST,2, NOTE_B3,4, NOTE_C4,4, //21
+  NOTE_CS4,-4, NOTE_C4,8, NOTE_CS4,2,
+  REST,4, NOTE_CS4,8, NOTE_C4,8, NOTE_CS4,8, NOTE_GS4,4, NOTE_DS4,8,
+  NOTE_CS4,-4, NOTE_DS4,8, NOTE_B3,1,
+
+  NOTE_E4,4, NOTE_E4,4, NOTE_E4,4, REST,8,//25
+
+  //finishes with 26
+  //NOTE_FS4,8, REST,8, NOTE_A4,8, NOTE_CS5,8, REST,8, NOTE_A4,8, REST,8, NOTE_FS4,8
+
+};
+int melody11[] = {  NOTE_D5,1,
+  NOTE_DS5,1,
+
+  NOTE_F5,1, //7
+  REST,4,  NOTE_F5,-4, NOTE_DS5,8,  NOTE_D5,8, NOTE_F5,1, NOTE_AS4,8,
+  NOTE_G4,-2, NOTE_F4,1,
+  NOTE_F4,1,
+
+  REST,4, //12
+  REST,8,
+  NOTE_F4,8, NOTE_G4,8, NOTE_GS4,8, NOTE_AS4,8, NOTE_C5,8,
+  NOTE_D5,1,
+  NOTE_DS5,1,
+  NOTE_F5,1,
+  NOTE_F5,-4,  NOTE_DS5,8, NOTE_D5,8, NOTE_CS5,8,
+  NOTE_C5,-2, NOTE_AS4,8,
+
+  NOTE_G4,1, //18
+  NOTE_F4,-1,
+  REST,4,
+  NOTE_D5,-4, REST,16, NOTE_D5,16, NOTE_D5,2,
+  REST,4, NOTE_D5,8, NOTE_DS5,8, NOTE_F5,8, NOTE_G5,8, NOTE_F5,8, NOTE_DS5,8, NOTE_D5,8,
+
+
+  NOTE_D5,-4, NOTE_DS5,16, NOTE_DS5,2, //23
+  REST,4, NOTE_G4,8, NOTE_C5,8, NOTE_D5,8, NOTE_DS5,8, NOTE_F5,8, NOTE_DS5,8, NOTE_D5,8,
+  NOTE_C5,-4, REST,16, NOTE_G4,2,
+  REST,4, NOTE_G4,8, NOTE_GS4,8, NOTE_AS4,8, NOTE_C5,8, NOTE_AS4,8, NOTE_GS4,8, NOTE_G5,8,
+
+  NOTE_F4,-4,  NOTE_AS4,-4, NOTE_G4,2, //27
+  REST,8, NOTE_C4,8, NOTE_D4,8, NOTE_DS4,8, NOTE_G4,8, NOTE_C5,8,
+  NOTE_D5,-4, REST,16, NOTE_D5,-16, NOTE_D5,2,
+  REST,4, NOTE_D5,8, NOTE_DS5,8, NOTE_F5,8, NOTE_G5,8, NOTE_F5,8, NOTE_DS5,8, NOTE_D5,8,
+  NOTE_D5,-4, NOTE_DS5,-16, NOTE_DS5,2,
+
+  REST,4, NOTE_C5,8, NOTE_D5,8, NOTE_DS5,8, NOTE_F5,8, NOTE_DS5,8, NOTE_D5,8, NOTE_AS4,8,//32
+  NOTE_AS4,-4, NOTE_C5,-4, NOTE_C5,-4,
+  NOTE_F4,-4, REST,8, NOTE_G4,4, NOTE_D5,4, NOTE_DS5,4,
+  NOTE_D5,-4, REST,16, NOTE_C5,16, NOTE_C5,2,
+
+  REST,4, NOTE_D5,4, NOTE_DS5,4, NOTE_F5,4, //36
+  NOTE_G5,-4, REST,16, NOTE_F5,2,
+  NOTE_AS5,-4, NOTE_G5,-4, NOTE_DS5,4,
+
+  NOTE_D5,-4, REST,16, NOTE_DS5,2, //39
+  REST,4, NOTE_C5,8, NOTE_D5,8, NOTE_DS5,8, NOTE_E5,8, NOTE_F5,8, NOTE_FS5,8,
+  NOTE_G5,-4, NOTE_F5,-4, REST,4,  NOTE_AS5,2,
+
+  NOTE_G5,4, NOTE_F5,8,  NOTE_G5,8,  REST,8, NOTE_E5,8,//42
+  REST,8, NOTE_D5,8, NOTE_C5,-2,
+  REST,8, NOTE_G4,8, NOTE_A4,8, NOTE_AS4,8, NOTE_C5,8, NOTE_D5,8, NOTE_DS5,8,
+
+  NOTE_DS5,-4,  NOTE_D5,-4,  NOTE_AS4,4, //45
+  REST,4, NOTE_DS5,8, NOTE_E5,8,  NOTE_F5,4, NOTE_E5,8, NOTE_DS5,8, NOTE_D5,8, NOTE_AS5,8,
+  NOTE_C5,4, NOTE_G4,8, NOTE_D5,4, NOTE_G4,8, NOTE_D5,4,
+  REST,8, NOTE_FS5,8, NOTE_G5,8, NOTE_FS5,8, NOTE_F5,8, NOTE_DS5,8, NOTE_D5,8, NOTE_DS5,8,
+
+  REST, 8, NOTE_AS5,8, NOTE_G5,8, NOTE_DS5,8, NOTE_F5,8, REST,8, NOTE_G5,8, //49
+  REST,8, NOTE_FS5,8,  NOTE_F5,8, NOTE_DS5,8, NOTE_F5,8, NOTE_DS5,8, NOTE_D5,8, NOTE_DS5,8,
+  NOTE_D5,-4,  NOTE_C5,-4, REST,4,
+  REST,4, NOTE_C5,8, NOTE_D5,8, NOTE_DS5,8, NOTE_D5,8, NOTE_C5,8, NOTE_AS4,8,
+
+  NOTE_D5,8,  NOTE_DS5,8,  NOTE_F5,8, NOTE_G5,8, NOTE_D5,8, NOTE_C5,8, NOTE_D5,8, NOTE_DS5,8,//53
+  NOTE_F5,8,  NOTE_G5,8,  NOTE_AS5,8, NOTE_GS5,8, NOTE_G5,8, NOTE_F5,8, NOTE_DS5,8, NOTE_F5,8,
+  NOTE_DS5,8,  NOTE_D5,16, NOTE_DS5,16, NOTE_D5,16, NOTE_AS4,8, NOTE_C5,8, NOTE_D5,8, NOTE_DS5,8, NOTE_F5,8,
+  NOTE_G5,8, NOTE_AS5,8, NOTE_GS5,8, NOTE_G5,8, NOTE_F5,8, NOTE_DS5,8, NOTE_D5,8, NOTE_DS5,8,
+
+  NOTE_C5,8,  NOTE_D5,8,  NOTE_DS5,8, NOTE_F5,8, NOTE_C5,8, NOTE_G4,8, NOTE_C5,8, NOTE_D5,8,//57
+  NOTE_DS5,8,  NOTE_F5,8,  NOTE_AS5,8, NOTE_F5,8, NOTE_DS5,8, NOTE_D5,8, NOTE_AS4,8, NOTE_DS5,8,
+  NOTE_D5,8,  NOTE_D5,16, NOTE_DS5,16, NOTE_D5,16, NOTE_G4,8, NOTE_C5,8, NOTE_D5,8, NOTE_DS5,8, NOTE_F5,8,
+  NOTE_F5,8, NOTE_AS5,8, NOTE_F5,8, NOTE_DS5,8, NOTE_D5,8, NOTE_DS5,8, NOTE_D5,8, NOTE_AS4,8,
+
+  NOTE_D5,8,  NOTE_DS5,8,  NOTE_F5,8, NOTE_G5,8, NOTE_AS4,8, NOTE_G4,8, NOTE_AS4,8, NOTE_DS5,8,//61
+  NOTE_AS5,8,  NOTE_DS5,8,  NOTE_AS5,8, NOTE_GS5,8, NOTE_G5,8, NOTE_GS5,8, NOTE_G5,8, NOTE_F5,8,
+  NOTE_DS5,8,  NOTE_D5,16, NOTE_DS5,16, NOTE_D5,16, NOTE_AS4,8, NOTE_C5,8, NOTE_D5,8, NOTE_DS5,8, NOTE_F5,8,
+
+  NOTE_C6,8, NOTE_D5,8, NOTE_AS5,8, NOTE_D5,8, NOTE_C5,8, NOTE_D5,8, NOTE_B5,8, NOTE_G4,8, //64
+  NOTE_C4,8, NOTE_DS4,8, NOTE_G4,8, NOTE_C5,8, NOTE_DS5,8, NOTE_G5,8, REST,8, NOTE_C5,8,
+  NOTE_D5,8, NOTE_DS5,8, NOTE_D5,16, NOTE_DS5,16, NOTE_D5,16, NOTE_C5,8, NOTE_G4,8, NOTE_C5,8, NOTE_G5,8,
+  NOTE_D5,-4, NOTE_C5,8, NOTE_C5,1,
+
+  REST,4,  //68
+  NOTE_DS4,8, NOTE_C4,-4, NOTE_DS4,2,
+  NOTE_D6,2, NOTE_B3,2,
+  NOTE_DS4,8, NOTE_C4,-4, NOTE_G3,2,
+  NOTE_D6,2, NOTE_B3,2,
+  NOTE_DS4,8, NOTE_C4,-4, NOTE_G4,2,
+  NOTE_FS4,2, NOTE_D4,2,
+  NOTE_F4,2, NOTE_D4,2,
+  NOTE_D4,2, NOTE_G4,2,
+
+  NOTE_G4,1, //77 these shold be tied together :(
+  NOTE_G4,1,
+  NOTE_G4,1,
+  NOTE_G4,1,
+  REST,1,
+  REST,1,
+  NOTE_G4,1,
+  NOTE_G4,1,
+  NOTE_DS4,2, NOTE_G4,2, //repeat from here
+  NOTE_G4,2, NOTE_C4,4, NOTE_D4,8, NOTE_DS4,8,
+
+  NOTE_F4,2, NOTE_AS4,2, //87
+  NOTE_AS4,2, NOTE_C4,4, NOTE_D4,8, NOTE_DS4,8,
+  NOTE_DS4,2, NOTE_G4,-2,
+  NOTE_F4,2, NOTE_G4,8, NOTE_F4,8,
+  NOTE_G4,-2, NOTE_D4,-1,
+  NOTE_C4,2, NOTE_G4,-2,
+  NOTE_F4,2,  NOTE_D4,8, NOTE_DS4,8,
+  NOTE_F4,2, NOTE_AS3,2,
+
+  NOTE_AS4,2, NOTE_C4,4, NOTE_D4,8, NOTE_DS4,8,
+  NOTE_DS4,2, NOTE_AS4,-2,
+  NOTE_GS4,2, NOTE_G4,8, NOTE_F4,8, NOTE_F4,8,
+  NOTE_G4,-1,
+
+
+  NOTE_DS4,2, NOTE_G4,2, //repeat from here
+  NOTE_G4,2, NOTE_C4,4, NOTE_D4,8, NOTE_DS4,8,
+
+  NOTE_F4,2, NOTE_AS4,2, //87
+  NOTE_AS4,2, NOTE_C4,4, NOTE_D4,8, NOTE_DS4,8,
+  NOTE_DS4,2, NOTE_G4,-2,
+  NOTE_F4,2, NOTE_G4,8, NOTE_F4,8,
+  NOTE_G4,-2, NOTE_D4,-1,
+  NOTE_C4,2, NOTE_G4,-2,
+  NOTE_F4,2,  NOTE_D4,8, NOTE_DS4,8,
+  NOTE_F4,2, NOTE_AS3,2,
+
+  NOTE_AS4,2, NOTE_C4,4, NOTE_D4,8, NOTE_DS4,8,
+  NOTE_DS4,2, NOTE_AS4,-2,
+  NOTE_GS4,2, NOTE_G4,8, NOTE_F4,8, NOTE_F4,8,
+  NOTE_G4,-1,
+
+};
+int melody12[] = {  NOTE_D4,4, NOTE_A4,4, NOTE_A4,4,
+  REST,8, NOTE_E4,8, NOTE_B4,2,
+  NOTE_F4,4, NOTE_C5,4, NOTE_C5,4,
+  REST,8, NOTE_E4,8, NOTE_B4,2,
+  NOTE_D4,4, NOTE_A4,4, NOTE_A4,4,
+  REST,8, NOTE_E4,8, NOTE_B4,2,
+  NOTE_F4,4, NOTE_C5,4, NOTE_C5,4,
+  REST,8, NOTE_E4,8, NOTE_B4,2,
+  NOTE_D4,8, NOTE_F4,8, NOTE_D5,2,
+
+  NOTE_D4,8, NOTE_F4,8, NOTE_D5,2,
+  NOTE_E5,-4, NOTE_F5,8, NOTE_E5,8, NOTE_E5,8,
+  NOTE_E5,8, NOTE_C5,8, NOTE_A4,2,
+  NOTE_A4,4, NOTE_D4,4, NOTE_F4,8, NOTE_G4,8,
+  NOTE_A4,-2,
+  NOTE_A4,4, NOTE_D4,4, NOTE_F4,8, NOTE_G4,8,
+  NOTE_E4,-2,
+  NOTE_D4,8, NOTE_F4,8, NOTE_D5,2,
+  NOTE_D4,8, NOTE_F4,8, NOTE_D5,2,
+
+  NOTE_E5,-4, NOTE_F5,8, NOTE_E5,8, NOTE_E5,8,
+  NOTE_E5,8, NOTE_C5,8, NOTE_A4,2,
+  NOTE_A4,4, NOTE_D4,4, NOTE_F4,8, NOTE_G4,8,
+  NOTE_A4,2, NOTE_A4,4,
+  NOTE_D4,1,
+};
+int melody13[] = { NOTE_E5,8, NOTE_E5,8, REST,8, NOTE_E5,8, REST,8, NOTE_C5,8, NOTE_E5,8, //1
+  NOTE_G5,4, REST,4, NOTE_G4,8, REST,4,
+  NOTE_C5,-4, NOTE_G4,8, REST,4, NOTE_E4,-4, // 3
+  NOTE_A4,4, NOTE_B4,4, NOTE_AS4,8, NOTE_A4,4,
+  NOTE_G4,-8, NOTE_E5,-8, NOTE_G5,-8, NOTE_A5,4, NOTE_F5,8, NOTE_G5,8,
+  REST,8, NOTE_E5,4,NOTE_C5,8, NOTE_D5,8, NOTE_B4,-4,
+  NOTE_C5,-4, NOTE_G4,8, REST,4, NOTE_E4,-4, // repeats from 3
+  NOTE_A4,4, NOTE_B4,4, NOTE_AS4,8, NOTE_A4,4,
+  NOTE_G4,-8, NOTE_E5,-8, NOTE_G5,-8, NOTE_A5,4, NOTE_F5,8, NOTE_G5,8,
+  REST,8, NOTE_E5,4,NOTE_C5,8, NOTE_D5,8, NOTE_B4,-4,
+
+
+  REST,4, NOTE_G5,8, NOTE_FS5,8, NOTE_F5,8, NOTE_DS5,4, NOTE_E5,8,//7
+  REST,8, NOTE_GS4,8, NOTE_A4,8, NOTE_C4,8, REST,8, NOTE_A4,8, NOTE_C5,8, NOTE_D5,8,
+  REST,4, NOTE_DS5,4, REST,8, NOTE_D5,-4,
+  NOTE_C5,2, REST,2,
+
+  REST,4, NOTE_G5,8, NOTE_FS5,8, NOTE_F5,8, NOTE_DS5,4, NOTE_E5,8,//repeats from 7
+  REST,8, NOTE_GS4,8, NOTE_A4,8, NOTE_C4,8, REST,8, NOTE_A4,8, NOTE_C5,8, NOTE_D5,8,
+  REST,4, NOTE_DS5,4, REST,8, NOTE_D5,-4,
+  NOTE_C5,2, REST,2,
+
+  NOTE_C5,8, NOTE_C5,4, NOTE_C5,8, REST,8, NOTE_C5,8, NOTE_D5,4,//11
+  NOTE_E5,8, NOTE_C5,4, NOTE_A4,8, NOTE_G4,2,
+
+  NOTE_C5,8, NOTE_C5,4, NOTE_C5,8, REST,8, NOTE_C5,8, NOTE_D5,8, NOTE_E5,8,//13
+  REST,1,
+  NOTE_C5,8, NOTE_C5,4, NOTE_C5,8, REST,8, NOTE_C5,8, NOTE_D5,4,
+  NOTE_E5,8, NOTE_C5,4, NOTE_A4,8, NOTE_G4,2,
+  NOTE_E5,8, NOTE_E5,8, REST,8, NOTE_E5,8, REST,8, NOTE_C5,8, NOTE_E5,4,
+  NOTE_G5,4, REST,4, NOTE_G4,4, REST,4,
+  NOTE_C5,-4, NOTE_G4,8, REST,4, NOTE_E4,-4, // 19
+
+  NOTE_A4,4, NOTE_B4,4, NOTE_AS4,8, NOTE_A4,4,
+  NOTE_G4,-8, NOTE_E5,-8, NOTE_G5,-8, NOTE_A5,4, NOTE_F5,8, NOTE_G5,8,
+  REST,8, NOTE_E5,4, NOTE_C5,8, NOTE_D5,8, NOTE_B4,-4,
+
+  NOTE_C5,-4, NOTE_G4,8, REST,4, NOTE_E4,-4, // repeats from 19
+  NOTE_A4,4, NOTE_B4,4, NOTE_AS4,8, NOTE_A4,4,
+  NOTE_G4,-8, NOTE_E5,-8, NOTE_G5,-8, NOTE_A5,4, NOTE_F5,8, NOTE_G5,8,
+  REST,8, NOTE_E5,4, NOTE_C5,8, NOTE_D5,8, NOTE_B4,-4,
+
+  NOTE_E5,8, NOTE_C5,4, NOTE_G4,8, REST,4, NOTE_GS4,4,//23
+  NOTE_A4,8, NOTE_F5,4, NOTE_F5,8, NOTE_A4,2,
+  NOTE_D5,-8, NOTE_A5,-8, NOTE_A5,-8, NOTE_A5,-8, NOTE_G5,-8, NOTE_F5,-8,
+
+  NOTE_E5,8, NOTE_C5,4, NOTE_A4,8, NOTE_G4,2, //26
+  NOTE_E5,8, NOTE_C5,4, NOTE_G4,8, REST,4, NOTE_GS4,4,
+  NOTE_A4,8, NOTE_F5,4, NOTE_F5,8, NOTE_A4,2,
+  NOTE_B4,8, NOTE_F5,4, NOTE_F5,8, NOTE_F5,-8, NOTE_E5,-8, NOTE_D5,-8,
+  NOTE_C5,8, NOTE_E4,4, NOTE_E4,8, NOTE_C4,2,
+
+  NOTE_E5,8, NOTE_C5,4, NOTE_G4,8, REST,4, NOTE_GS4,4,//repeats from 23
+  NOTE_A4,8, NOTE_F5,4, NOTE_F5,8, NOTE_A4,2,
+  NOTE_D5,-8, NOTE_A5,-8, NOTE_A5,-8, NOTE_A5,-8, NOTE_G5,-8, NOTE_F5,-8,
+
+  NOTE_E5,8, NOTE_C5,4, NOTE_A4,8, NOTE_G4,2, //26
+  NOTE_E5,8, NOTE_C5,4, NOTE_G4,8, REST,4, NOTE_GS4,4,
+  NOTE_A4,8, NOTE_F5,4, NOTE_F5,8, NOTE_A4,2,
+  NOTE_B4,8, NOTE_F5,4, NOTE_F5,8, NOTE_F5,-8, NOTE_E5,-8, NOTE_D5,-8,
+  NOTE_C5,8, NOTE_E4,4, NOTE_E4,8, NOTE_C4,2,
+  NOTE_C5,8, NOTE_C5,4, NOTE_C5,8, REST,8, NOTE_C5,8, NOTE_D5,8, NOTE_E5,8,
+  REST,1,
+
+  NOTE_C5,8, NOTE_C5,4, NOTE_C5,8, REST,8, NOTE_C5,8, NOTE_D5,4, //33
+  NOTE_E5,8, NOTE_C5,4, NOTE_A4,8, NOTE_G4,2,
+  NOTE_E5,8, NOTE_E5,8, REST,8, NOTE_E5,8, REST,8, NOTE_C5,8, NOTE_E5,4,
+  NOTE_G5,4, REST,4, NOTE_G4,4, REST,4,
+  NOTE_E5,8, NOTE_C5,4, NOTE_G4,8, REST,4, NOTE_GS4,4,
+  NOTE_A4,8, NOTE_F5,4, NOTE_F5,8, NOTE_A4,2,
+  NOTE_D5,-8, NOTE_A5,-8, NOTE_A5,-8, NOTE_A5,-8, NOTE_G5,-8, NOTE_F5,-8,
+
+  NOTE_E5,8, NOTE_C5,4, NOTE_A4,8, NOTE_G4,2, //40
+  NOTE_E5,8, NOTE_C5,4, NOTE_G4,8, REST,4, NOTE_GS4,4,
+  NOTE_A4,8, NOTE_F5,4, NOTE_F5,8, NOTE_A4,2,
+  NOTE_B4,8, NOTE_F5,4, NOTE_F5,8, NOTE_F5,-8, NOTE_E5,-8, NOTE_D5,-8,
+  NOTE_C5,8, NOTE_E4,4, NOTE_E4,8, NOTE_C4,2,
+
+  //game over sound
+  NOTE_C5,-4, NOTE_G4,-4, NOTE_E4,4, //45
+  NOTE_A4,-8, NOTE_B4,-8, NOTE_A4,-8, NOTE_GS4,-8, NOTE_AS4,-8, NOTE_GS4,-8,
+  NOTE_G4,8, NOTE_D4,8, NOTE_E4,-2,
+
+};
+int melody14[] = {  NOTE_E5, 4,  NOTE_B4,8,  NOTE_C5,8,  NOTE_D5,4,  NOTE_C5,8,  NOTE_B4,8,
+  NOTE_A4, 4,  NOTE_A4,8,  NOTE_C5,8,  NOTE_E5,4,  NOTE_D5,8,  NOTE_C5,8,
+  NOTE_B4, -4,  NOTE_C5,8,  NOTE_D5,4,  NOTE_E5,4,
+  NOTE_C5, 4,  NOTE_A4,4,  NOTE_A4,8,  NOTE_A4,4,  NOTE_B4,8,  NOTE_C5,8,
+
+  NOTE_D5, -4,  NOTE_F5,8,  NOTE_A5,4,  NOTE_G5,8,  NOTE_F5,8,
+  NOTE_E5, -4,  NOTE_C5,8,  NOTE_E5,4,  NOTE_D5,8,  NOTE_C5,8,
+  NOTE_B4, 4,  NOTE_B4,8,  NOTE_C5,8,  NOTE_D5,4,  NOTE_E5,4,
+  NOTE_C5, 4,  NOTE_A4,4,  NOTE_A4,4, REST, 4,
+
+  NOTE_E5, 4,  NOTE_B4,8,  NOTE_C5,8,  NOTE_D5,4,  NOTE_C5,8,  NOTE_B4,8,
+  NOTE_A4, 4,  NOTE_A4,8,  NOTE_C5,8,  NOTE_E5,4,  NOTE_D5,8,  NOTE_C5,8,
+  NOTE_B4, -4,  NOTE_C5,8,  NOTE_D5,4,  NOTE_E5,4,
+  NOTE_C5, 4,  NOTE_A4,4,  NOTE_A4,8,  NOTE_A4,4,  NOTE_B4,8,  NOTE_C5,8,
+
+  NOTE_D5, -4,  NOTE_F5,8,  NOTE_A5,4,  NOTE_G5,8,  NOTE_F5,8,
+  NOTE_E5, -4,  NOTE_C5,8,  NOTE_E5,4,  NOTE_D5,8,  NOTE_C5,8,
+  NOTE_B4, 4,  NOTE_B4,8,  NOTE_C5,8,  NOTE_D5,4,  NOTE_E5,4,
+  NOTE_C5, 4,  NOTE_A4,4,  NOTE_A4,4, REST, 4,
+
+
+  NOTE_E5,2,  NOTE_C5,2,
+  NOTE_D5,2,   NOTE_B4,2,
+  NOTE_C5,2,   NOTE_A4,2,
+  NOTE_GS4,2,  NOTE_B4,4,  REST,8,
+  NOTE_E5,2,   NOTE_C5,2,
+  NOTE_D5,2,   NOTE_B4,2,
+  NOTE_C5,4,   NOTE_E5,4,  NOTE_A5,2,
+  NOTE_GS5,2,
+
+};
+int melody15[] = {  NOTE_E4,2, NOTE_G4,4,
+  NOTE_D4,2, NOTE_C4,8, NOTE_D4,8,
+  NOTE_E4,2, NOTE_G4,4,
+  NOTE_D4,-2,
+  NOTE_E4,2, NOTE_G4,4,
+  NOTE_D5,2, NOTE_C5,4,
+  NOTE_G4,2, NOTE_F4,8, NOTE_E4,8,
+  NOTE_D4,-2,
+  NOTE_E4,2, NOTE_G4,4,
+  NOTE_D4,2, NOTE_C4,8, NOTE_D4,8,
+  NOTE_E4,2, NOTE_G4,4,
+  NOTE_D4,-2,
+  NOTE_E4,2, NOTE_G4,4,
+
+  NOTE_D5,2, NOTE_C5,4,
+  NOTE_G4,2, NOTE_F4,8, NOTE_E4,8,
+  NOTE_F4,8, NOTE_E4,8, NOTE_C4,2,
+  NOTE_F4,2, NOTE_E4,8, NOTE_D4,8,
+  NOTE_E4,8, NOTE_D4,8, NOTE_A3,2,
+  NOTE_G4,2, NOTE_F4,8, NOTE_E4,8,
+  NOTE_F4,8, NOTE_E4,8, NOTE_C4,4, NOTE_F4,4,
+  NOTE_C5,-2,
+
+};
+int melody16[] = {  NOTE_AS4,-2,  NOTE_F4,8,  NOTE_F4,8,  NOTE_AS4,8,//1
+  NOTE_GS4,16,  NOTE_FS4,16,  NOTE_GS4,-2,
+  NOTE_AS4,-2,  NOTE_FS4,8,  NOTE_FS4,8,  NOTE_AS4,8,
+  NOTE_A4,16,  NOTE_G4,16,  NOTE_A4,-2,
+  REST,1,
+
+  NOTE_AS4,4,  NOTE_F4,-4,  NOTE_AS4,8,  NOTE_AS4,16,  NOTE_C5,16, NOTE_D5,16, NOTE_DS5,16,//7
+  NOTE_F5,2,  NOTE_F5,8,  NOTE_F5,8,  NOTE_F5,8,  NOTE_FS5,16, NOTE_GS5,16,
+  NOTE_AS5,-2,  NOTE_AS5,8,  NOTE_AS5,8,  NOTE_GS5,8,  NOTE_FS5,16,
+  NOTE_GS5,-8,  NOTE_FS5,16,  NOTE_F5,2,  NOTE_F5,4,
+
+  NOTE_DS5,-8, NOTE_F5,16, NOTE_FS5,2, NOTE_F5,8, NOTE_DS5,8, //11
+  NOTE_CS5,-8, NOTE_DS5,16, NOTE_F5,2, NOTE_DS5,8, NOTE_CS5,8,
+  NOTE_C5,-8, NOTE_D5,16, NOTE_E5,2, NOTE_G5,8,
+  NOTE_F5,16, NOTE_F4,16, NOTE_F4,16, NOTE_F4,16,NOTE_F4,16,NOTE_F4,16,NOTE_F4,16,NOTE_F4,16,NOTE_F4,8, NOTE_F4,16,NOTE_F4,8,
+
+  NOTE_AS4,4,  NOTE_F4,-4,  NOTE_AS4,8,  NOTE_AS4,16,  NOTE_C5,16, NOTE_D5,16, NOTE_DS5,16,//15
+  NOTE_F5,2,  NOTE_F5,8,  NOTE_F5,8,  NOTE_F5,8,  NOTE_FS5,16, NOTE_GS5,16,
+  NOTE_AS5,-2, NOTE_CS6,4,
+  NOTE_C6,4, NOTE_A5,2, NOTE_F5,4,
+  NOTE_FS5,-2, NOTE_AS5,4,
+  NOTE_A5,4, NOTE_F5,2, NOTE_F5,4,
+
+  NOTE_FS5,-2, NOTE_AS5,4,
+  NOTE_A5,4, NOTE_F5,2, NOTE_D5,4,
+  NOTE_DS5,-2, NOTE_FS5,4,
+  NOTE_F5,4, NOTE_CS5,2, NOTE_AS4,4,
+  NOTE_C5,-8, NOTE_D5,16, NOTE_E5,2, NOTE_G5,8,
+  NOTE_F5,16, NOTE_F4,16, NOTE_F4,16, NOTE_F4,16,NOTE_F4,16,NOTE_F4,16,NOTE_F4,16,NOTE_F4,16,NOTE_F4,8, NOTE_F4,16,NOTE_F4,8
+
+};
+int melody17[] = { NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //1
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //5
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //9
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //13
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_FS3, -16, NOTE_D3, -16, NOTE_B2, -16, NOTE_A3, -16, NOTE_FS3, -16, NOTE_B2, -16, NOTE_D3, -16, NOTE_FS3, -16, NOTE_A3, -16, NOTE_FS3, -16, NOTE_D3, -16, NOTE_B2, -16,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //17
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //21
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_B3, -16, NOTE_G3, -16, NOTE_E3, -16, NOTE_G3, -16, NOTE_B3, -16, NOTE_E4, -16, NOTE_G3, -16, NOTE_B3, -16, NOTE_E4, -16, NOTE_B3, -16, NOTE_G4, -16, NOTE_B4, -16,
+
+  NOTE_A2, 8, NOTE_A2, 8, NOTE_A3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_G3, 8, NOTE_A2, 8, NOTE_A2, 8, //25
+  NOTE_F3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_DS3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_E3, 8, NOTE_F3, 8,
+  NOTE_A2, 8, NOTE_A2, 8, NOTE_A3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_G3, 8, NOTE_A2, 8, NOTE_A2, 8,
+  NOTE_F3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_DS3, -2,
+
+  NOTE_A2, 8, NOTE_A2, 8, NOTE_A3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_G3, 8, NOTE_A2, 8, NOTE_A2, 8, //29
+  NOTE_F3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_DS3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_E3, 8, NOTE_F3, 8,
+  NOTE_A2, 8, NOTE_A2, 8, NOTE_A3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_G3, 8, NOTE_A2, 8, NOTE_A2, 8,
+  NOTE_A3, -16, NOTE_F3, -16, NOTE_D3, -16, NOTE_A3, -16, NOTE_F3, -16, NOTE_D3, -16, NOTE_C4, -16, NOTE_A3, -16, NOTE_F3, -16, NOTE_A3, -16, NOTE_F3, -16, NOTE_D3, -16,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //33
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //37
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_CS3, 8, NOTE_CS3, 8, NOTE_CS4, 8, NOTE_CS3, 8, NOTE_CS3, 8, NOTE_B3, 8, NOTE_CS3, 8, NOTE_CS3, 8, //41
+  NOTE_A3, 8, NOTE_CS3, 8, NOTE_CS3, 8, NOTE_G3, 8, NOTE_CS3, 8, NOTE_CS3, 8, NOTE_GS3, 8, NOTE_A3, 8,
+  NOTE_B2, 8, NOTE_B2, 8, NOTE_B3, 8, NOTE_B2, 8, NOTE_B2, 8, NOTE_A3, 8, NOTE_B2, 8, NOTE_B2, 8,
+  NOTE_G3, 8, NOTE_B2, 8, NOTE_B2, 8, NOTE_F3, -2,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //45
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_B3, -16, NOTE_G3, -16, NOTE_E3, -16, NOTE_G3, -16, NOTE_B3, -16, NOTE_E4, -16, NOTE_G3, -16, NOTE_B3, -16, NOTE_E4, -16, NOTE_B3, -16, NOTE_G4, -16, NOTE_B4, -16,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //49
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //53
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_FS3, -16, NOTE_DS3, -16, NOTE_B2, -16, NOTE_FS3, -16, NOTE_DS3, -16, NOTE_B2, -16, NOTE_G3, -16, NOTE_D3, -16, NOTE_B2, -16, NOTE_DS4, -16, NOTE_DS3, -16, NOTE_B2, -16,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //57
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //61
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_E4, -16, NOTE_B3, -16, NOTE_G3, -16, NOTE_G4, -16, NOTE_E4, -16, NOTE_G3, -16, NOTE_B3, -16, NOTE_D4, -16, NOTE_E4, -16, NOTE_G4, -16, NOTE_E4, -16, NOTE_G3, -16,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //65
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_A2, 8, NOTE_A2, 8, NOTE_A3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_G3, 8, NOTE_A2, 8, NOTE_A2, 8, //69
+  NOTE_F3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_DS3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_E3, 8, NOTE_F3, 8,
+  NOTE_A2, 8, NOTE_A2, 8, NOTE_A3, 8, NOTE_A2, 8, NOTE_A2, 8, NOTE_G3, 8, NOTE_A2, 8, NOTE_A2, 8,
+  NOTE_A3, -16, NOTE_F3, -16, NOTE_D3, -16, NOTE_A3, -16, NOTE_F3, -16, NOTE_D3, -16, NOTE_C4, -16, NOTE_A3, -16, NOTE_F3, -16, NOTE_A3, -16, NOTE_F3, -16, NOTE_D3, -16,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //73
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //77
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //81
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, -2,
+
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8, //73
+  NOTE_C3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_AS2, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_B2, 8, NOTE_C3, 8,
+  NOTE_E2, 8, NOTE_E2, 8, NOTE_E3, 8, NOTE_E2, 8, NOTE_E2, 8, NOTE_D3, 8, NOTE_E2, 8, NOTE_E2, 8,
+  NOTE_B3, -16, NOTE_G3, -16, NOTE_E3, -16, NOTE_B2, -16, NOTE_E3, -16, NOTE_G3, -16, NOTE_C4, -16, NOTE_B3, -16, NOTE_G3, -16, NOTE_B3, -16, NOTE_G3, -16, NOTE_E3, -16,
+};
+int melody18[] = {  NOTE_D5,-4, NOTE_A5,8, NOTE_FS5,8, NOTE_D5,8,
+  NOTE_E5,-4, NOTE_FS5,8, NOTE_G5,4,
+  NOTE_FS5,-4, NOTE_E5,8, NOTE_FS5,4,
+  NOTE_D5,-2,
+  NOTE_D5,-4, NOTE_A5,8, NOTE_FS5,8, NOTE_D5,8,
+  NOTE_E5,-4, NOTE_FS5,8, NOTE_G5,4,
+  NOTE_FS5,-1,
+  NOTE_D5,-4, NOTE_A5,8, NOTE_FS5,8, NOTE_D5,8,
+  NOTE_E5,-4, NOTE_FS5,8, NOTE_G5,4,
+
+  NOTE_FS5,-4, NOTE_E5,8, NOTE_FS5,4,
+  NOTE_D5,-2,
+  NOTE_D5,-4, NOTE_A5,8, NOTE_FS5,8, NOTE_D5,8,
+  NOTE_E5,-4, NOTE_FS5,8, NOTE_G5,4,
+  NOTE_FS5,-1,
+
+};
+int melody19[] = { NOTE_E5,16, NOTE_E5,8, NOTE_D5,16, REST,16, NOTE_CS5,-4, NOTE_E4,8, NOTE_FS4,16, NOTE_G4,16, NOTE_A4,16,
+
+  NOTE_B4,-8, NOTE_E4,-8, NOTE_B4,8, NOTE_A4,16, NOTE_D5,-4, //7
+  NOTE_E5,16, NOTE_E5,8, NOTE_D5,16, REST,16, NOTE_CS5,-4, NOTE_E4,8, NOTE_FS4,16, NOTE_G4,16, NOTE_A4,16,
+  NOTE_B4,-8, NOTE_E4,-8, NOTE_B4,8, NOTE_A4,16, NOTE_D4,-4,
+  REST,8, NOTE_E5,8, REST,16, NOTE_B5,16, REST,8, NOTE_AS5,16, NOTE_B5,16, NOTE_AS5,16, NOTE_G5,16, REST,4,
+
+  NOTE_B5,8, NOTE_B5,16, NOTE_AS5,16, REST,16, NOTE_AS5,16, NOTE_A5,16, REST,16, NOTE_B5,16, NOTE_G5,16, NOTE_B5,16, NOTE_AS5,16, REST,16, NOTE_B5,16, NOTE_A5,16, NOTE_G5,16,//11
+  REST,8, NOTE_E5,8, REST,16, NOTE_B5,16, REST,8, NOTE_AS5,16, NOTE_B5,16, NOTE_AS5,16, NOTE_G5,16, REST,4,
+  NOTE_B5,8, NOTE_B5,16, NOTE_AS5,16, REST,16, NOTE_AS5,16, NOTE_A5,16, REST,16, NOTE_B5,16, NOTE_G5,16, NOTE_B5,16, NOTE_AS5,16, REST,16, NOTE_B5,16, NOTE_A5,16, NOTE_G5,16,
+
+  NOTE_DS4,-8, NOTE_FS4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_G4,-8, NOTE_E4,8, //14
+  NOTE_DS4,-8, NOTE_FS4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_G4,-8, REST,8,
+  NOTE_DS4,-8, NOTE_FS4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_G4,-8, NOTE_E4,8,
+  NOTE_DS4,-8, NOTE_FS4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_CS5,-8, NOTE_DS5,8,
+
+  NOTE_E5,16, NOTE_E5,16, NOTE_E4,16, NOTE_E4,-2,//18
+  NOTE_C4,8, NOTE_C4,8, NOTE_E4,16, NOTE_G4,-8, NOTE_D4,8, NOTE_D4,8, NOTE_FS4,16, NOTE_A4,-8,
+  NOTE_E5,16, NOTE_E5,16, NOTE_E4,16, NOTE_E4,-2,
+  NOTE_C4,8, NOTE_C4,8, NOTE_E4,16, NOTE_G4,-8, NOTE_D4,8, NOTE_D4,8, NOTE_B3,16, NOTE_D4,-8,
+
+  //repeats a second time
+
+  NOTE_E5,16, NOTE_E5,8, NOTE_D5,16, REST,16, NOTE_CS5,-4, NOTE_E4,8, NOTE_FS4,16, NOTE_G4,16, NOTE_A4,16,
+
+  NOTE_B4,-8, NOTE_E4,-8, NOTE_B4,8, NOTE_A4,16, NOTE_D5,-4, //7
+  NOTE_E5,16, NOTE_E5,8, NOTE_D5,16, REST,16, NOTE_CS5,-4, NOTE_E4,8, NOTE_FS4,16, NOTE_G4,16, NOTE_A4,16,
+  NOTE_B4,-8, NOTE_E4,-8, NOTE_B4,8, NOTE_A4,16, NOTE_D4,-4,
+  REST,8, NOTE_E5,8, REST,16, NOTE_B5,16, REST,8, NOTE_AS5,16, NOTE_B5,16, NOTE_AS5,16, NOTE_G5,16, REST,4,
+
+  NOTE_B5,8, NOTE_B5,16, NOTE_AS5,16, REST,16, NOTE_AS5,16, NOTE_A5,16, REST,16, NOTE_B5,16, NOTE_G5,16, NOTE_B5,16, NOTE_AS5,16, REST,16, NOTE_B5,16, NOTE_A5,16, NOTE_G5,16,//11
+  REST,8, NOTE_E5,8, REST,16, NOTE_B5,16, REST,8, NOTE_AS5,16, NOTE_B5,16, NOTE_AS5,16, NOTE_G5,16, REST,4,
+  NOTE_B5,8, NOTE_B5,16, NOTE_AS5,16, REST,16, NOTE_AS5,16, NOTE_A5,16, REST,16, NOTE_B5,16, NOTE_G5,16, NOTE_B5,16, NOTE_AS5,16, REST,16, NOTE_B5,16, NOTE_A5,16, NOTE_G5,16,
+
+  NOTE_DS4,-8, NOTE_FS4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_G4,-8, NOTE_E4,8, //14
+  NOTE_DS4,-8, NOTE_FS4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_G4,-8, REST,8,
+  NOTE_DS4,-8, NOTE_FS4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_G4,-8, NOTE_E4,8,
+  NOTE_DS4,-8, NOTE_FS4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_CS5,-8, NOTE_DS5,8,
+
+  NOTE_E5,16, NOTE_E5,16, NOTE_E4,16, NOTE_E4,-2,//18
+  NOTE_C4,8, NOTE_C4,8, NOTE_E4,16, NOTE_G4,-8, NOTE_D4,8, NOTE_D4,8, NOTE_FS4,16, NOTE_A4,-8,
+  NOTE_E5,16, NOTE_E5,16, NOTE_E4,16, NOTE_E4,-2,
+  NOTE_C4,8, NOTE_C4,8, NOTE_E4,16, NOTE_G4,-8, NOTE_D4,8, NOTE_D4,8, NOTE_B3,16, NOTE_D4,-8,
+
+};
+int melody20[] = {  NOTE_FS4,2, NOTE_E4,2,
+  NOTE_D4,2, NOTE_CS4,2,
+  NOTE_B3,2, NOTE_A3,2,
+  NOTE_B3,2, NOTE_CS4,2,
+  NOTE_FS4,2, NOTE_E4,2,
+  NOTE_D4,2, NOTE_CS4,2,
+  NOTE_B3,2, NOTE_A3,2,
+  NOTE_B3,2, NOTE_CS4,2,
+  NOTE_D4,2, NOTE_CS4,2,
+  NOTE_B3,2, NOTE_A3,2,
+  NOTE_G3,2, NOTE_FS3,2,
+  NOTE_G3,2, NOTE_A3,2,
+
+  NOTE_D4,4, NOTE_FS4,8, NOTE_G4,8, NOTE_A4,4, NOTE_FS4,8, NOTE_G4,8,
+  NOTE_A4,4, NOTE_B3,8, NOTE_CS4,8, NOTE_D4,8, NOTE_E4,8, NOTE_FS4,8, NOTE_G4,8,
+  NOTE_FS4,4, NOTE_D4,8, NOTE_E4,8, NOTE_FS4,4, NOTE_FS3,8, NOTE_G3,8,
+  NOTE_A3,8, NOTE_G3,8, NOTE_FS3,8, NOTE_G3,8, NOTE_A3,2,
+  NOTE_G3,4, NOTE_B3,8, NOTE_A3,8, NOTE_G3,4, NOTE_FS3,8, NOTE_E3,8,
+  NOTE_FS3,4, NOTE_D3,8, NOTE_E3,8, NOTE_FS3,8, NOTE_G3,8, NOTE_A3,8, NOTE_B3,8,
+
+  NOTE_G3,4, NOTE_B3,8, NOTE_A3,8, NOTE_B3,4, NOTE_CS4,8, NOTE_D4,8,
+  NOTE_A3,8, NOTE_B3,8, NOTE_CS4,8, NOTE_D4,8, NOTE_E4,8, NOTE_FS4,8, NOTE_G4,8, NOTE_A4,2,
+  NOTE_A4,4, NOTE_FS4,8, NOTE_G4,8, NOTE_A4,4,
+  NOTE_FS4,8, NOTE_G4,8, NOTE_A4,8, NOTE_A3,8, NOTE_B3,8, NOTE_CS4,8,
+  NOTE_D4,8, NOTE_E4,8, NOTE_FS4,8, NOTE_G4,8, NOTE_FS4,4, NOTE_D4,8, NOTE_E4,8,
+  NOTE_FS4,8, NOTE_CS4,8, NOTE_A3,8, NOTE_A3,8,
+
+  NOTE_CS4,4, NOTE_B3,4, NOTE_D4,8, NOTE_CS4,8, NOTE_B3,4,
+  NOTE_A3,8, NOTE_G3,8, NOTE_A3,4, NOTE_D3,8, NOTE_E3,8, NOTE_FS3,8, NOTE_G3,8,
+  NOTE_A3,8, NOTE_B3,4, NOTE_G3,4, NOTE_B3,8, NOTE_A3,8, NOTE_B3,4,
+  NOTE_CS4,8, NOTE_D4,8, NOTE_A3,8, NOTE_B3,8, NOTE_CS4,8, NOTE_D4,8, NOTE_E4,8,
+  NOTE_FS4,8, NOTE_G4,8, NOTE_A4,2,
+
+
+};
+int melody21[] = { NOTE_G4,8,//1
+  NOTE_AS4,4, NOTE_C5,8, NOTE_D5,-8, NOTE_DS5,16, NOTE_D5,8,
+  NOTE_C5,4, NOTE_A4,8, NOTE_F4,-8, NOTE_G4,16, NOTE_A4,8,
+  NOTE_AS4,4, NOTE_G4,8, NOTE_G4,-8, NOTE_FS4,16, NOTE_G4,8,
+  NOTE_A4,4, NOTE_FS4,8, NOTE_D4,4, NOTE_G4,8,
+
+  NOTE_AS4,4, NOTE_C5,8, NOTE_D5,-8, NOTE_DS5,16, NOTE_D5,8,//6
+  NOTE_C5,4, NOTE_A4,8, NOTE_F4,-8, NOTE_G4,16, NOTE_A4,8,
+  NOTE_AS4,-8, NOTE_A4,16, NOTE_G4,8, NOTE_FS4,-8, NOTE_E4,16, NOTE_FS4,8,
+  NOTE_G4,-2,
+  NOTE_F5,2, NOTE_E5,16, NOTE_D5,8,
+
+  NOTE_C5,4, NOTE_A4,8, NOTE_F4,-8, NOTE_G4,16, NOTE_A4,8,//11
+  NOTE_AS4,4, NOTE_G4,8, NOTE_G4,-8, NOTE_FS4,16, NOTE_G4,8,
+  NOTE_A4,4, NOTE_FS4,8, NOTE_D4,04,
+  NOTE_F5,2, NOTE_E5,16, NOTE_D5,8,
+  NOTE_C5,4, NOTE_A4,8, NOTE_F4,-8, NOTE_G4,16, NOTE_A4,8,
+
+  NOTE_AS4,-8, NOTE_A4,16, NOTE_G4,8, NOTE_FS4,-8, NOTE_E4,16, NOTE_FS4,8,//16
+  NOTE_G4,-2,
+
+  //repeats from the beginning
+
+  NOTE_G4,8,//1
+  NOTE_AS4,4, NOTE_C5,8, NOTE_D5,-8, NOTE_DS5,16, NOTE_D5,8,
+  NOTE_C5,4, NOTE_A4,8, NOTE_F4,-8, NOTE_G4,16, NOTE_A4,8,
+  NOTE_AS4,4, NOTE_G4,8, NOTE_G4,-8, NOTE_FS4,16, NOTE_G4,8,
+  NOTE_A4,4, NOTE_FS4,8, NOTE_D4,4, NOTE_G4,8,
+
+  NOTE_AS4,4, NOTE_C5,8, NOTE_D5,-8, NOTE_DS5,16, NOTE_D5,8,//6
+  NOTE_C5,4, NOTE_A4,8, NOTE_F4,-8, NOTE_G4,16, NOTE_A4,8,
+  NOTE_AS4,-8, NOTE_A4,16, NOTE_G4,8, NOTE_FS4,-8, NOTE_E4,16, NOTE_FS4,8,
+  NOTE_G4,-2,
+  NOTE_F5,2, NOTE_E5,16, NOTE_D5,8,
+
+  NOTE_C5,4, NOTE_A4,8, NOTE_F4,-8, NOTE_G4,16, NOTE_A4,8,//11
+  NOTE_AS4,4, NOTE_G4,8, NOTE_G4,-8, NOTE_FS4,16, NOTE_G4,8,
+  NOTE_A4,4, NOTE_FS4,8, NOTE_D4,04,
+  NOTE_F5,2, NOTE_E5,16, NOTE_D5,8,
+  NOTE_C5,4, NOTE_A4,8, NOTE_F4,-8, NOTE_G4,16, NOTE_A4,8,
+
+  NOTE_AS4,-8, NOTE_A4,16, NOTE_G4,8, NOTE_FS4,-8, NOTE_E4,16, NOTE_FS4,8,//16
+  NOTE_G4,-2
+
+
+};
+int melody22[] = {  NOTE_E4,4,  NOTE_E4,4,  NOTE_F4,4,  NOTE_G4,4,//1
+  NOTE_G4,4,  NOTE_F4,4,  NOTE_E4,4,  NOTE_D4,4,
+  NOTE_C4,4,  NOTE_C4,4,  NOTE_D4,4,  NOTE_E4,4,
+  NOTE_E4,-4, NOTE_D4,8,  NOTE_D4,2,
+
+  NOTE_E4,4,  NOTE_E4,4,  NOTE_F4,4,  NOTE_G4,4,//4
+  NOTE_G4,4,  NOTE_F4,4,  NOTE_E4,4,  NOTE_D4,4,
+  NOTE_C4,4,  NOTE_C4,4,  NOTE_D4,4,  NOTE_E4,4,
+  NOTE_D4,-4,  NOTE_C4,8,  NOTE_C4,2,
+
+  NOTE_D4,4,  NOTE_D4,4,  NOTE_E4,4,  NOTE_C4,4,//8
+  NOTE_D4,4,  NOTE_E4,8,  NOTE_F4,8,  NOTE_E4,4, NOTE_C4,4,
+  NOTE_D4,4,  NOTE_E4,8,  NOTE_F4,8,  NOTE_E4,4, NOTE_D4,4,
+  NOTE_C4,4,  NOTE_D4,4,  NOTE_G3,2,
+
+  NOTE_E4,4,  NOTE_E4,4,  NOTE_F4,4,  NOTE_G4,4,//12
+  NOTE_G4,4,  NOTE_F4,4,  NOTE_E4,4,  NOTE_D4,4,
+  NOTE_C4,4,  NOTE_C4,4,  NOTE_D4,4,  NOTE_E4,4,
+  NOTE_D4,-4,  NOTE_C4,8,  NOTE_C4,2
+
+};
+int melody23[] = {  NOTE_G4, 4, NOTE_G4, 4, NOTE_D5, -2,
+  NOTE_C5, 8, NOTE_D5, 8, NOTE_AS4, 4, NOTE_A4, 8, NOTE_G4, 8,
+  NOTE_A4, 8, NOTE_AS4, 8, NOTE_C5, 1,
+
+  NOTE_D5, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_F4, 8,
+  NOTE_D4, 4, NOTE_D4, 4, NOTE_G4, -2,
+  NOTE_A4, 4, NOTE_G4, 4, NOTE_F4, 8, NOTE_E4, 8,
+
+  NOTE_F4, 4, NOTE_E4, 4, NOTE_D4, 1,
+  NOTE_E4, 4, NOTE_F4, 4, NOTE_A4, 4,
+  NOTE_G4, 4, NOTE_G4, 4, NOTE_AS4, -2,
+
+  NOTE_C5, 4, NOTE_AS4, 4, NOTE_A4, 8, NOTE_G4, 8,
+  NOTE_A4, 4, NOTE_AS4, 4, NOTE_C5, -2,
+  NOTE_CS5, 4, NOTE_C5, 4, NOTE_A4, 4,
+
+  NOTE_CS5, 4, NOTE_CS4, 4, NOTE_F5, -2,
+  NOTE_G5, 4, NOTE_F5, 4, NOTE_DS4, 8, NOTE_CS4, 8,
+  NOTE_F5, 2, NOTE_C5, -2,
+
+  NOTE_AS4, 4, NOTE_C5, 4, NOTE_AS4, 8, NOTE_A4, 8,
+  NOTE_G4, 4, NOTE_G4, 4, NOTE_AS4, 1,
+  NOTE_C5, 4, NOTE_AS4, 4, NOTE_A4, 8, NOTE_G4, 8,
+
+  NOTE_F4, 4, NOTE_G4, 4, NOTE_A4, 1,
+  NOTE_AS4, 4, NOTE_A4, 4, NOTE_F4, 4,
+  NOTE_G4, 4, NOTE_G4, 4, NOTE_D5, -2,
+
+  NOTE_C5, 4, NOTE_AS4, 4, NOTE_A4, 8, NOTE_G4, 8,
+  NOTE_A4,-1, NOTE_A4,-1, REST,2,
+  NOTE_G4, 4, NOTE_G4, 4, NOTE_D5, -2,
+
+  NOTE_C5, 8, NOTE_D5, 8, NOTE_AS4, 4, NOTE_A4, 8, NOTE_G4, 8,
+  NOTE_A4, 8, NOTE_AS4, 8, NOTE_C5, 1,
+  NOTE_C5, 8, NOTE_D5, 8, NOTE_C5, 4, NOTE_AS4, 8, NOTE_A4, 8,
+
+
+  NOTE_D4, 4, NOTE_D4, 4, NOTE_G4, -2,
+  NOTE_G4, 8, NOTE_A4, 8, NOTE_G4, 4, NOTE_F4, 8, NOTE_E4, 8,
+  NOTE_F4, 8, NOTE_E4, 8, NOTE_D4, -2,//1
+
+  REST,4, NOTE_C5, 8, NOTE_D5, 8, NOTE_C5, 4, NOTE_AS4, 8, NOTE_A4, 8,
+  NOTE_G4, 4, NOTE_G4, 4, NOTE_B4, -2,
+  NOTE_C5, 4, NOTE_AS4, 4, NOTE_A4, 8, NOTE_G4, 8,
+
+  NOTE_A4, 4, NOTE_G4, 4, NOTE_F4, -1, REST,4,
+  NOTE_G4, 4, NOTE_G4, 4, NOTE_D5, -2,
+  NOTE_C5, 8, NOTE_D5, 8, NOTE_AS4, 4, NOTE_A4, 8, NOTE_G4, 8,
+
+  NOTE_A4, 4, NOTE_G4, 4, NOTE_F4, -2,
+  NOTE_A4, 4, NOTE_G4, 4, NOTE_F4, -2,
+  NOTE_A4, 4, NOTE_G4, 4, NOTE_F4, -1,
+
+};
+int melody24[] = {  NOTE_D5,4, NOTE_G4,8, NOTE_A4,8, NOTE_B4,8, NOTE_C5,8, //1
+  NOTE_D5,4, NOTE_G4,4, NOTE_G4,4,
+  NOTE_E5,4, NOTE_C5,8, NOTE_D5,8, NOTE_E5,8, NOTE_FS5,8,
+  NOTE_G5,4, NOTE_G4,4, NOTE_G4,4,
+  NOTE_C5,4, NOTE_D5,8, NOTE_C5,8, NOTE_B4,8, NOTE_A4,8,
+
+  NOTE_B4,4, NOTE_C5,8, NOTE_B4,8, NOTE_A4,8, NOTE_G4,8,//6
+  NOTE_FS4,4, NOTE_G4,8, NOTE_A4,8, NOTE_B4,8, NOTE_G4,8,
+  NOTE_A4,-2,
+  NOTE_D5,4, NOTE_G4,8, NOTE_A4,8, NOTE_B4,8, NOTE_C5,8,
+  NOTE_D5,4, NOTE_G4,4, NOTE_G4,4,
+  NOTE_E5,4, NOTE_C5,8, NOTE_D5,8, NOTE_E5,8, NOTE_FS5,8,
+
+  NOTE_G5,4, NOTE_G4,4, NOTE_G4,4,
+  NOTE_C5,4, NOTE_D5,8, NOTE_C5,8, NOTE_B4,8, NOTE_A4,8, //12
+  NOTE_B4,4, NOTE_C5,8, NOTE_B4,8, NOTE_A4,8, NOTE_G4,8,
+  NOTE_A4,4, NOTE_B4,8, NOTE_A4,8, NOTE_G4,8, NOTE_FS4,8,
+  NOTE_G4,-2,
+
+  //repeats from 1
+
+  NOTE_D5,4, NOTE_G4,8, NOTE_A4,8, NOTE_B4,8, NOTE_C5,8, //1
+  NOTE_D5,4, NOTE_G4,4, NOTE_G4,4,
+  NOTE_E5,4, NOTE_C5,8, NOTE_D5,8, NOTE_E5,8, NOTE_FS5,8,
+  NOTE_G5,4, NOTE_G4,4, NOTE_G4,4,
+  NOTE_C5,4, NOTE_D5,8, NOTE_C5,8, NOTE_B4,8, NOTE_A4,8,
+
+  NOTE_B4,4, NOTE_C5,8, NOTE_B4,8, NOTE_A4,8, NOTE_G4,8,//6
+  NOTE_FS4,4, NOTE_G4,8, NOTE_A4,8, NOTE_B4,8, NOTE_G4,8,
+  NOTE_A4,-2,
+  NOTE_D5,4, NOTE_G4,8, NOTE_A4,8, NOTE_B4,8, NOTE_C5,8,
+  NOTE_D5,4, NOTE_G4,4, NOTE_G4,4,
+  NOTE_E5,4, NOTE_C5,8, NOTE_D5,8, NOTE_E5,8, NOTE_FS5,8,
+
+  NOTE_G5,4, NOTE_G4,4, NOTE_G4,4,
+  NOTE_C5,4, NOTE_D5,8, NOTE_C5,8, NOTE_B4,8, NOTE_A4,8, //12
+  NOTE_B4,4, NOTE_C5,8, NOTE_B4,8, NOTE_A4,8, NOTE_G4,8,
+  NOTE_A4,4, NOTE_B4,8, NOTE_A4,8, NOTE_G4,8, NOTE_FS4,8,
+  NOTE_G4,-2,
+
+  //continues from 17
+
+  NOTE_B5,4, NOTE_G5,8, NOTE_A5,8, NOTE_B5,8, NOTE_G5,8,//17
+  NOTE_A5,4, NOTE_D5,8, NOTE_E5,8, NOTE_FS5,8, NOTE_D5,8,
+  NOTE_G5,4, NOTE_E5,8, NOTE_FS5,8, NOTE_G5,8, NOTE_D5,8,
+  NOTE_CS5,4, NOTE_B4,8, NOTE_CS5,8, NOTE_A4,4,
+  NOTE_A4,8, NOTE_B4,8, NOTE_CS5,8, NOTE_D5,8, NOTE_E5,8, NOTE_FS5,8,
+
+  NOTE_G5,4, NOTE_FS5,4, NOTE_E5,4, //22
+  NOTE_FS5,4, NOTE_A4,4, NOTE_CS5,4,
+  NOTE_D5,-2,
+  NOTE_D5,4, NOTE_G4,8, NOTE_FS5,8, NOTE_G4,4,
+  NOTE_E5,4,  NOTE_G4,8, NOTE_FS4,8, NOTE_G4,4,
+  NOTE_D5,4, NOTE_C5,4, NOTE_B4,4,
+
+  NOTE_A4,8, NOTE_G4,8, NOTE_FS4,8, NOTE_G4,8, NOTE_A4,4, //28
+  NOTE_D4,8, NOTE_E4,8, NOTE_FS4,8, NOTE_G4,8, NOTE_A4,8, NOTE_B4,8,
+  NOTE_C5,4, NOTE_B4,4, NOTE_A4,4,
+  NOTE_B4,8, NOTE_D5,8, NOTE_G4,4, NOTE_FS4,4,
+  NOTE_G4,-2,
+  };
+int melody25[] = {  NOTE_G4, 4, NOTE_G4, 4, //1
+  NOTE_AS4, -4, NOTE_G4, 8, NOTE_G4, 4,
+  NOTE_AS4, 4, REST, 4, NOTE_G4, 8, NOTE_AS4, 8,
+  NOTE_DS5, 4, NOTE_D5, -4, NOTE_C5, 8,
+  NOTE_C5, 4, NOTE_AS4, 4, NOTE_F4, 8, NOTE_G4, 8,
+  NOTE_GS4, 4, NOTE_F4, 4, NOTE_F4, 8, NOTE_G4, 8,
+  NOTE_GS4, 4, REST, 4, NOTE_F4, 8, NOTE_GS4, 8,
+  NOTE_D5, 8, NOTE_C5, 8, NOTE_AS4, 4, NOTE_D5, 4,
+
+  NOTE_DS5, 4, REST, 4, NOTE_DS4, 8, NOTE_DS4, 8, //8
+  NOTE_DS5, 2, NOTE_C5, 8, NOTE_GS4, 8,
+  NOTE_AS4, 2, NOTE_G4, 8, NOTE_DS4, 8,
+  NOTE_GS4, 4, NOTE_AS4, 4, NOTE_C5, 4,
+  NOTE_AS4, 2, NOTE_DS4, 8, NOTE_DS4, 8,
+  NOTE_DS5, 2, NOTE_C5, 8, NOTE_GS4, 8,
+  NOTE_AS4, 2, NOTE_G4, 8, NOTE_DS4, 8,
+  NOTE_AS4, 4, NOTE_G4, 4, NOTE_DS4, 4,
+  NOTE_DS4, 2
+
+};
+int melody26[] = {  NOTE_E5, 16, NOTE_DS5, 16, //1
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, -8, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, -8, NOTE_E4, 16, NOTE_GS4, 16, NOTE_B4, 16,
+  NOTE_C5, 8,  REST, 16, NOTE_E4, 16, NOTE_E5, 16,  NOTE_DS5, 16,
+
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,//6
+  NOTE_A4, -8, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, -8, NOTE_E4, 16, NOTE_C5, 16, NOTE_B4, 16,
+  NOTE_A4 , 4, REST, 8, //9 - 1st ending
+
+  //repaets from 1 ending on 10
+  NOTE_E5, 16, NOTE_DS5, 16, //1
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, -8, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, -8, NOTE_E4, 16, NOTE_GS4, 16, NOTE_B4, 16,
+  NOTE_C5, 8,  REST, 16, NOTE_E4, 16, NOTE_E5, 16,  NOTE_DS5, 16,
+
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,//6
+  NOTE_A4, -8, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, -8, NOTE_E4, 16, NOTE_C5, 16, NOTE_B4, 16,
+  NOTE_A4, 8, REST, 16, NOTE_B4, 16, NOTE_C5, 16, NOTE_D5, 16, //10 - 2nd ending
+  //continues from 11
+  NOTE_E5, -8, NOTE_G4, 16, NOTE_F5, 16, NOTE_E5, 16,
+  NOTE_D5, -8, NOTE_F4, 16, NOTE_E5, 16, NOTE_D5, 16, //12
+
+  NOTE_C5, -8, NOTE_E4, 16, NOTE_D5, 16, NOTE_C5, 16, //13
+  NOTE_B4, 8, REST, 16, NOTE_E4, 16, NOTE_E5, 16, REST, 16,
+  REST, 16, NOTE_E5, 16, NOTE_E6, 16, REST, 16, REST, 16, NOTE_DS5, 16,
+  NOTE_E5, 16, REST, 16, REST, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_DS5, 16,
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, 8, REST, 16, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+
+  NOTE_B4, 8, REST, 16, NOTE_E4, 16, NOTE_GS4, 16, NOTE_B4, 16, //19
+  NOTE_C5, 8, REST, 16, NOTE_E4, 16, NOTE_E5, 16,  NOTE_DS5, 16,
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, 8, REST, 16, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, 8, REST, 16, NOTE_E4, 16, NOTE_C5, 16, NOTE_B4, 16,
+  NOTE_A4, 8, REST, 16, NOTE_B4, 16, NOTE_C5, 16, NOTE_D5, 16, //24 (1st ending)
+
+  //repeats from 11
+  NOTE_E5, -8, NOTE_G4, 16, NOTE_F5, 16, NOTE_E5, 16,
+  NOTE_D5, -8, NOTE_F4, 16, NOTE_E5, 16, NOTE_D5, 16, //12
+
+  NOTE_C5, -8, NOTE_E4, 16, NOTE_D5, 16, NOTE_C5, 16, //13
+  NOTE_B4, 8, REST, 16, NOTE_E4, 16, NOTE_E5, 16, REST, 16,
+  REST, 16, NOTE_E5, 16, NOTE_E6, 16, REST, 16, REST, 16, NOTE_DS5, 16,
+  NOTE_E5, 16, REST, 16, REST, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_DS5, 16,
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, 8, REST, 16, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+
+  NOTE_B4, 8, REST, 16, NOTE_E4, 16, NOTE_GS4, 16, NOTE_B4, 16, //19
+  NOTE_C5, 8, REST, 16, NOTE_E4, 16, NOTE_E5, 16,  NOTE_DS5, 16,
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, 8, REST, 16, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, 8, REST, 16, NOTE_E4, 16, NOTE_C5, 16, NOTE_B4, 16,
+  NOTE_A4, 8, REST, 16, NOTE_C5, 16, NOTE_C5, 16, NOTE_C5, 16, //25 - 2nd ending
+
+  //continues from 26
+  NOTE_C5 , 4, NOTE_F5, -16, NOTE_E5, 32, //26
+  NOTE_E5, 8, NOTE_D5, 8, NOTE_AS5, -16, NOTE_A5, 32,
+  NOTE_A5, 16, NOTE_G5, 16, NOTE_F5, 16, NOTE_E5, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_AS4, 8, NOTE_A4, 8, NOTE_A4, 32, NOTE_G4, 32, NOTE_A4, 32, NOTE_B4, 32,
+  NOTE_C5 , 4, NOTE_D5, 16, NOTE_DS5, 16,
+  NOTE_E5, -8, NOTE_E5, 16, NOTE_F5, 16, NOTE_A4, 16,
+  NOTE_C5 , 4,  NOTE_D5, -16, NOTE_B4, 32,
+
+
+  NOTE_C5, 32, NOTE_G5, 32, NOTE_G4, 32, NOTE_G5, 32, NOTE_A4, 32, NOTE_G5, 32, NOTE_B4, 32, NOTE_G5, 32, NOTE_C5, 32, NOTE_G5, 32, NOTE_D5, 32, NOTE_G5, 32, //33
+  NOTE_E5, 32, NOTE_G5, 32, NOTE_C6, 32, NOTE_B5, 32, NOTE_A5, 32, NOTE_G5, 32, NOTE_F5, 32, NOTE_E5, 32, NOTE_D5, 32, NOTE_G5, 32, NOTE_F5, 32, NOTE_D5, 32,
+  NOTE_C5, 32, NOTE_G5, 32, NOTE_G4, 32, NOTE_G5, 32, NOTE_A4, 32, NOTE_G5, 32, NOTE_B4, 32, NOTE_G5, 32, NOTE_C5, 32, NOTE_G5, 32, NOTE_D5, 32, NOTE_G5, 32,
+
+  NOTE_E5, 32, NOTE_G5, 32, NOTE_C6, 32, NOTE_B5, 32, NOTE_A5, 32, NOTE_G5, 32, NOTE_F5, 32, NOTE_E5, 32, NOTE_D5, 32, NOTE_G5, 32, NOTE_F5, 32, NOTE_D5, 32, //36
+  NOTE_E5, 32, NOTE_F5, 32, NOTE_E5, 32, NOTE_DS5, 32, NOTE_E5, 32, NOTE_B4, 32, NOTE_E5, 32, NOTE_DS5, 32, NOTE_E5, 32, NOTE_B4, 32, NOTE_E5, 32, NOTE_DS5, 32,
+  NOTE_E5, -8, NOTE_B4, 16, NOTE_E5, 16, NOTE_DS5, 16,
+  NOTE_E5, -8, NOTE_B4, 16, NOTE_E5, 16, REST, 16,
+
+  REST, 16, NOTE_DS5, 16, NOTE_E5, 16, REST, 16, REST, 16, NOTE_DS5, 16, //40
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, 8, REST, 16, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, 8, REST, 16, NOTE_E4, 16, NOTE_GS4, 16, NOTE_B4, 16,
+  NOTE_C5, 8, REST, 16, NOTE_E4, 16, NOTE_E5, 16, NOTE_DS5, 16,
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+
+  NOTE_A4, 8, REST, 16, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16, //46
+  NOTE_B4, 8, REST, 16, NOTE_E4, 16, NOTE_C5, 16, NOTE_B4, 16,
+  NOTE_A4, 8, REST, 16, NOTE_B4, 16, NOTE_C5, 16, NOTE_D5, 16,
+  NOTE_E5, -8, NOTE_G4, 16, NOTE_F5, 16, NOTE_E5, 16,
+  NOTE_D5, -8, NOTE_F4, 16, NOTE_E5, 16, NOTE_D5, 16,
+  NOTE_C5, -8, NOTE_E4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_B4, 8, REST, 16, NOTE_E4, 16, NOTE_E5, 16, REST, 16,
+  REST, 16, NOTE_E5, 16, NOTE_E6, 16, REST, 16, REST, 16, NOTE_DS5, 16,
+
+  NOTE_E5, 16, REST, 16, REST, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_D5, 16, //54
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, 8, REST, 16, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, 8, REST, 16, NOTE_E4, 16, NOTE_GS4, 16, NOTE_B4, 16,
+  NOTE_C5, 8, REST, 16, NOTE_E4, 16, NOTE_E5, 16, NOTE_DS5, 16,
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+
+  NOTE_A4, 8, REST, 16, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16, //60
+  NOTE_B4, 8, REST, 16, NOTE_E4, 16, NOTE_C5, 16, NOTE_B4, 16,
+  NOTE_A4, 8, REST, 16, REST, 16, REST, 8,
+  NOTE_CS5 , -4,
+  NOTE_D5 , 4, NOTE_E5, 16, NOTE_F5, 16,
+  NOTE_F5 , 4, NOTE_F5, 8,
+  NOTE_E5 , -4,
+  NOTE_D5 , 4, NOTE_C5, 16, NOTE_B4, 16,
+  NOTE_A4 , 4, NOTE_A4, 8,
+  NOTE_A4, 8, NOTE_C5, 8, NOTE_B4, 8,
+  NOTE_A4 , -4,
+  NOTE_CS5 , -4,
+
+  NOTE_D5 , 4, NOTE_E5, 16, NOTE_F5, 16, //72
+  NOTE_F5 , 4, NOTE_F5, 8,
+  NOTE_F5 , -4,
+  NOTE_DS5 , 4, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_AS4 , 4, NOTE_A4, 8,
+  NOTE_GS4 , 4, NOTE_G4, 8,
+  NOTE_A4 , -4,
+  NOTE_B4 , 4, REST, 8,
+  NOTE_A3, -32, NOTE_C4, -32, NOTE_E4, -32, NOTE_A4, -32, NOTE_C5, -32, NOTE_E5, -32, NOTE_D5, -32, NOTE_C5, -32, NOTE_B4, -32,
+
+  NOTE_A4, -32, NOTE_C5, -32, NOTE_E5, -32, NOTE_A5, -32, NOTE_C6, -32, NOTE_E6, -32, NOTE_D6, -32, NOTE_C6, -32, NOTE_B5, -32, //80
+  NOTE_A4, -32, NOTE_C5, -32, NOTE_E5, -32, NOTE_A5, -32, NOTE_C6, -32, NOTE_E6, -32, NOTE_D6, -32, NOTE_C6, -32, NOTE_B5, -32,
+  NOTE_AS5, -32, NOTE_A5, -32, NOTE_GS5, -32, NOTE_G5, -32, NOTE_FS5, -32, NOTE_F5, -32, NOTE_E5, -32, NOTE_DS5, -32, NOTE_D5, -32,
+
+  NOTE_CS5, -32, NOTE_C5, -32, NOTE_B4, -32, NOTE_AS4, -32, NOTE_A4, -32, NOTE_GS4, -32, NOTE_G4, -32, NOTE_FS4, -32, NOTE_F4, -32, //84
+  NOTE_E4, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, -8, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, -8, NOTE_E4, 16, NOTE_GS4, 16, NOTE_B4, 16,
+
+  NOTE_C5, 8, REST, 16, NOTE_E4, 16, NOTE_E5, 16, NOTE_DS5, 16, //88
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, -8, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, -8, NOTE_E4, 16, NOTE_C5, 16, NOTE_B4, 16,
+  NOTE_A4, -8, REST, -8,
+  REST, -8, NOTE_G4, 16, NOTE_F5, 16, NOTE_E5, 16,
+  NOTE_D5 , 4, REST, 8,
+  REST, -8, NOTE_E4, 16, NOTE_D5, 16, NOTE_C5, 16,
+
+  NOTE_B4, -8, NOTE_E4, 16, NOTE_E5, 8, //96
+  NOTE_E5, 8, NOTE_E6, -8, NOTE_DS5, 16,
+  NOTE_E5, 16, REST, 16, REST, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_DS5, 16,
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, -8, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, -8, NOTE_E4, 16, NOTE_GS4, 16, NOTE_B4, 16,
+
+  NOTE_C5, 8, REST, 16, NOTE_E4, 16, NOTE_E5, 16, NOTE_DS5, 16, //102
+  NOTE_E5, 16, NOTE_DS5, 16, NOTE_E5, 16, NOTE_B4, 16, NOTE_D5, 16, NOTE_C5, 16,
+  NOTE_A4, -8, NOTE_C4, 16, NOTE_E4, 16, NOTE_A4, 16,
+  NOTE_B4, -8, NOTE_E4, 16, NOTE_C5, 16, NOTE_B4, 16,
+  NOTE_A4 , -4,
+};
+int melody27[] = {  NOTE_G4,8, NOTE_A4,8, NOTE_B4,4, NOTE_D5,4, NOTE_D5,4, NOTE_B4,4,
+  NOTE_C5,4, NOTE_C5,2, NOTE_G4,8, NOTE_A4,8,
+  NOTE_B4,4, NOTE_D5,4, NOTE_D5,4, NOTE_C5,4,
+
+  NOTE_B4,2, REST,8, NOTE_G4,8, NOTE_G4,8, NOTE_A4,8,
+  NOTE_B4,4, NOTE_D5,4, REST,8, NOTE_D5,8, NOTE_C5,8, NOTE_B4,8,
+  NOTE_G4,4, NOTE_C5,4, REST,8, NOTE_C5,8, NOTE_B4,8, NOTE_A4,8,
+
+  NOTE_A4,4, NOTE_B4,4, REST,8, NOTE_B4,8, NOTE_A4,8, NOTE_G4,8,
+  NOTE_G4,2, REST,8, NOTE_G4,8, NOTE_G4,8, NOTE_A4,8,
+  NOTE_B4,4, NOTE_D5,4, REST,8, NOTE_D5,8, NOTE_C5,8, NOTE_B4,8,
+
+  NOTE_G4,4, NOTE_C5,4, REST,8, NOTE_C5,8, NOTE_B4,8, NOTE_A4,8,
+  NOTE_A4,4, NOTE_B4,4, REST,8, NOTE_B4,8, NOTE_A4,8, NOTE_G4,8,
+  NOTE_G4,4, NOTE_F5,8, NOTE_D5,8, NOTE_E5,8, NOTE_C5,8, NOTE_D5,8, NOTE_B4,8,
+
+  NOTE_C5,8, NOTE_A4,8, NOTE_B4,8, NOTE_G4,8, NOTE_A4,8, NOTE_G4,8, NOTE_E4,8, NOTE_G4,8,
+  NOTE_G4,4, NOTE_F5,8, NOTE_D5,8, NOTE_E5,8, NOTE_C5,8, NOTE_D5,8, NOTE_B4,8,
+  NOTE_C5,8, NOTE_A4,8, NOTE_B4,8, NOTE_G4,8, NOTE_A4,8, NOTE_G4,8, NOTE_E4,8, NOTE_G4,8,
+  NOTE_G4,-2, REST,4
+
+};
+int melody28[] = {  REST,2, REST,4, REST,8, NOTE_DS4,8,
+  NOTE_E4,-4, REST,8, NOTE_FS4,8, NOTE_G4,-4, REST,8, NOTE_DS4,8,
+  NOTE_E4,-8, NOTE_FS4,8,  NOTE_G4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_E4,8, NOTE_G4,-8, NOTE_B4,8,
+  NOTE_AS4,2, NOTE_A4,-16, NOTE_G4,-16, NOTE_E4,-16, NOTE_D4,-16,
+  NOTE_E4,2, REST,4, REST,8, NOTE_DS4,4,
+
+  NOTE_E4,-4, REST,8, NOTE_FS4,8, NOTE_G4,-4, REST,8, NOTE_DS4,8,
+  NOTE_E4,-8, NOTE_FS4,8,  NOTE_G4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_G4,8, NOTE_B4,-8, NOTE_E5,8,
+  NOTE_DS5,1,
+  NOTE_D5,2, REST,4, REST,8, NOTE_DS4,8,
+  NOTE_E4,-4, REST,8, NOTE_FS4,8, NOTE_G4,-4, REST,8, NOTE_DS4,8,
+  NOTE_E4,-8, NOTE_FS4,8,  NOTE_G4,-8, NOTE_C5,8, NOTE_B4,-8, NOTE_E4,8, NOTE_G4,-8, NOTE_B4,8,
+
+  NOTE_AS4,2, NOTE_A4,-16, NOTE_G4,-16, NOTE_E4,-16, NOTE_D4,-16,
+  NOTE_E4,-4, REST,4,
+  REST,4, NOTE_E5,-8, NOTE_D5,8, NOTE_B4,-8, NOTE_A4,8, NOTE_G4,-8, NOTE_E4,-8,
+  NOTE_AS4,16, NOTE_A4,-8, NOTE_AS4,16, NOTE_A4,-8, NOTE_AS4,16, NOTE_A4,-8, NOTE_AS4,16, NOTE_A4,-8,
+  NOTE_G4,-16, NOTE_E4,-16, NOTE_D4,-16, NOTE_E4,16, NOTE_E4,16, NOTE_E4,2,
+
+};
+int melody29[] = {  NOTE_FS5,8, NOTE_FS5,8,NOTE_D5,8, NOTE_B4,8, REST,8, NOTE_B4,8, REST,8, NOTE_E5,8,
+  REST,8, NOTE_E5,8, REST,8, NOTE_E5,8, NOTE_GS5,8, NOTE_GS5,8, NOTE_A5,8, NOTE_B5,8,
+  NOTE_A5,8, NOTE_A5,8, NOTE_A5,8, NOTE_E5,8, REST,8, NOTE_D5,8, REST,8, NOTE_FS5,8,
+  REST,8, NOTE_FS5,8, REST,8, NOTE_FS5,8, NOTE_E5,8, NOTE_E5,8, NOTE_FS5,8, NOTE_E5,8,
+  NOTE_FS5,8, NOTE_FS5,8,NOTE_D5,8, NOTE_B4,8, REST,8, NOTE_B4,8, REST,8, NOTE_E5,8,
+
+  REST,8, NOTE_E5,8, REST,8, NOTE_E5,8, NOTE_GS5,8, NOTE_GS5,8, NOTE_A5,8, NOTE_B5,8,
+  NOTE_A5,8, NOTE_A5,8, NOTE_A5,8, NOTE_E5,8, REST,8, NOTE_D5,8, REST,8, NOTE_FS5,8,
+  REST,8, NOTE_FS5,8, REST,8, NOTE_FS5,8, NOTE_E5,8, NOTE_E5,8, NOTE_FS5,8, NOTE_E5,8,
+  NOTE_FS5,8, NOTE_FS5,8,NOTE_D5,8, NOTE_B4,8, REST,8, NOTE_B4,8, REST,8, NOTE_E5,8,
+  REST,8, NOTE_E5,8, REST,8, NOTE_E5,8, NOTE_GS5,8, NOTE_GS5,8, NOTE_A5,8, NOTE_B5,8,
+
+  NOTE_A5,8, NOTE_A5,8, NOTE_A5,8, NOTE_E5,8, REST,8, NOTE_D5,8, REST,8, NOTE_FS5,8,
+  REST,8, NOTE_FS5,8, REST,8, NOTE_FS5,8, NOTE_E5,8, NOTE_E5,8, NOTE_FS5,8, NOTE_E5,8,
+
+};
+int melody30[] = { NOTE_D4,8, NOTE_E4,8, NOTE_F4,8, NOTE_G4,8, NOTE_E4,4, NOTE_C4,8, NOTE_D4,1,
+};
+int melody31[] = {  NOTE_F4, 4, NOTE_G4, 4, NOTE_A4, 8, NOTE_G4, 4, NOTE_A4, 8, //1
+  NOTE_AS4, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_F4, 4, NOTE_G4, 8,
+  NOTE_A4, 4, NOTE_C4, 8, NOTE_C4, 4, NOTE_C4, 8, NOTE_C4, 4,
+  NOTE_C4, 1, //1st ending
+
+  NOTE_F4, 4, NOTE_G4, 4, NOTE_A4, 8, NOTE_G4, 4, NOTE_A4, 8, //repeats from 1
+  NOTE_AS4, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_F4, 4, NOTE_G4, 8,
+  NOTE_A4, 4, NOTE_C4, 8, NOTE_C4, 4, NOTE_C4, 8, NOTE_C4, 4,
+  NOTE_C4, -2,  REST, -8, NOTE_A4, 16, //2nd ending
+
+  NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16, //6
+  NOTE_AS4, -8, NOTE_AS4, 16, NOTE_AS4, -8, NOTE_AS4, 16, NOTE_AS4, -8, NOTE_AS4, 16, NOTE_AS4, -8, NOTE_AS4, 16,
+  NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16,
+  NOTE_G4, -8, NOTE_G4, 16, NOTE_G4, -8, NOTE_G4, 16, NOTE_G4, -8, NOTE_G4, 16, NOTE_G4, -8, NOTE_G4, 16,
+
+  NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16, //10
+  NOTE_AS4, -8, NOTE_AS4, 16, NOTE_AS4, -8, NOTE_AS4, 16, NOTE_AS4, -8, NOTE_AS4, 16, NOTE_AS4, -8, NOTE_AS4, 16,
+  NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16, NOTE_A4, -8, NOTE_A4, 16,
+  NOTE_G4, -8, NOTE_G4, 16, NOTE_G4, -8, NOTE_G4, 16, NOTE_G4, -8, NOTE_G4, 16, NOTE_G4, -8, NOTE_G4, 16,
+
+  NOTE_F4, 4, NOTE_G4, 4, NOTE_A4, 8, NOTE_G4, 4, NOTE_A4, 8, //14
+  NOTE_AS4, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_F4, 4, NOTE_G4, 8,
+  NOTE_A4, 4, NOTE_G4, 4, NOTE_F4, 4, NOTE_A4, 4,
+  NOTE_G4, 1,
+  NOTE_C5, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_A4, 4, NOTE_C5, 8,
+  NOTE_AS4, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_F4, 4, NOTE_G4, 8,
+  NOTE_A4, 4, NOTE_G4, 4, NOTE_F4, 4, NOTE_A4, 4,
+  NOTE_G4, 1,
+
+  NOTE_C5, 1, //22
+  NOTE_C5, 4, NOTE_AS4, 8, NOTE_C5, 8, NOTE_AS4, 2,
+  NOTE_A4, 4, NOTE_C4, 8, NOTE_C4, 4, NOTE_C4, 8, NOTE_C4, 4,
+  NOTE_C4, 1,
+
+  REST, 4, NOTE_A4, 8, NOTE_G4, 8, NOTE_F4, 8, NOTE_E4, 8, NOTE_D4, 8, NOTE_C4, 8,
+  NOTE_D4, 1,
+  REST, 4, NOTE_A4, 8, NOTE_G4, 8, NOTE_F4, 8, NOTE_E4, 8, NOTE_D4, 8, NOTE_C4, 8,
+  NOTE_D4, 1,
+
+  NOTE_F4, 4, NOTE_G4, 4, NOTE_A4, 8, NOTE_G4, 4, NOTE_A4, 8, //repeats from 14
+  NOTE_AS4, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_F4, 4, NOTE_G4, 8,
+  NOTE_A4, 4, NOTE_G4, 4, NOTE_F4, 4, NOTE_A4, 4,
+  NOTE_G4, 1,
+  NOTE_C5, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_A4, 4, NOTE_C5, 8,
+  NOTE_AS4, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_F4, 4, NOTE_G4, 8,
+  NOTE_A4, 4, NOTE_G4, 4, NOTE_F4, 4, NOTE_A4, 4,
+  NOTE_G4, 1,
+
+  NOTE_C5, 1, //22
+  NOTE_C5, 4, NOTE_AS4, 8, NOTE_C5, 8, NOTE_AS4, 2,
+  NOTE_A4, 4, NOTE_C4, 8, NOTE_C4, 4, NOTE_C4, 8, NOTE_C4, 4,
+  NOTE_C4, 1,
+
+  REST, 4, NOTE_A4, 8, NOTE_G4, 8, NOTE_F4, 8, NOTE_E4, 8, NOTE_D4, 8, NOTE_C4, 8,
+  NOTE_D4, 1,
+  REST, 4, NOTE_A4, 8, NOTE_G4, 8, NOTE_F4, 8, NOTE_E4, 8, NOTE_D4, 8, NOTE_C4, 8,
+  NOTE_D4, 1,
+
+  NOTE_F4, 4, NOTE_G4, 4, NOTE_A4, 8, NOTE_G4, 4, NOTE_A4, 8, //30
+  NOTE_AS4, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_F4, 4, NOTE_G4, 8,
+  NOTE_A4, 4, NOTE_C4, 8, NOTE_C4, 4, NOTE_C4, 8, NOTE_C4, 4,
+  NOTE_C4, 1,
+
+  NOTE_F4, 4, NOTE_G4, 4, NOTE_A4, 8, NOTE_G4, 4, NOTE_A4, 8, //repeats from 14 (again)
+  NOTE_AS4, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_F4, 4, NOTE_G4, 8,
+  NOTE_A4, 4, NOTE_G4, 4, NOTE_F4, 4, NOTE_A4, 4,
+  NOTE_G4, 1,
+  NOTE_C5, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_A4, 4, NOTE_C5, 8,
+  NOTE_AS4, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_F4, 4, NOTE_G4, 8,
+  NOTE_A4, 4, NOTE_G4, 4, NOTE_F4, 4, NOTE_A4, 4,
+  NOTE_G4, 1,
+
+  NOTE_C5, 1, //22
+  NOTE_C5, 4, NOTE_AS4, 8, NOTE_C5, 8, NOTE_AS4, 2,
+  NOTE_A4, 4, NOTE_C4, 8, NOTE_C4, 4, NOTE_C4, 8, NOTE_C4, 4,
+  NOTE_C4, 1,
+
+  REST, 4, NOTE_A4, 8, NOTE_G4, 8, NOTE_F4, 8, NOTE_E4, 8, NOTE_D4, 8, NOTE_C4, 8,
+  NOTE_D4, 1,
+  REST, 4, NOTE_A4, 8, NOTE_G4, 8, NOTE_F4, 8, NOTE_E4, 8, NOTE_D4, 8, NOTE_C4, 8,
+  NOTE_D4, 1,
+
+  NOTE_F4, 4, NOTE_G4, 4, NOTE_A4, 8, NOTE_G4, 4, NOTE_A4, 8, //30
+  NOTE_AS4, 4, NOTE_A4, 4, NOTE_G4, 8, NOTE_F4, 4, NOTE_G4, 8,
+  NOTE_A4, 4, NOTE_C4, 8, NOTE_C4, 4, NOTE_C4, 8, NOTE_C4, 4,
+  NOTE_C4, 1,
+
+};
+int melody32[] = {    REST,1,
+    REST,1,
+    NOTE_C4,4, NOTE_E4,4, NOTE_G4,4, NOTE_E4,4,
+    NOTE_C4,4, NOTE_E4,8, NOTE_G4,-4, NOTE_E4,4,
+    NOTE_A3,4, NOTE_C4,4, NOTE_E4,4, NOTE_C4,4,
+    NOTE_A3,4, NOTE_C4,8, NOTE_E4,-4, NOTE_C4,4,
+    NOTE_G3,4, NOTE_B3,4, NOTE_D4,4, NOTE_B3,4,
+    NOTE_G3,4, NOTE_B3,8, NOTE_D4,-4, NOTE_B3,4,
+
+    NOTE_G3,4, NOTE_G3,8, NOTE_G3,-4, NOTE_G3,8, NOTE_G3,4,
+    NOTE_G3,4, NOTE_G3,4, NOTE_G3,8, NOTE_G3,4,
+    NOTE_C4,4, NOTE_E4,4, NOTE_G4,4, NOTE_E4,4,
+    NOTE_C4,4, NOTE_E4,8, NOTE_G4,-4, NOTE_E4,4,
+    NOTE_A3,4, NOTE_C4,4, NOTE_E4,4, NOTE_C4,4,
+    NOTE_A3,4, NOTE_C4,8, NOTE_E4,-4, NOTE_C4,4,
+    NOTE_G3,4, NOTE_B3,4, NOTE_D4,4, NOTE_B3,4,
+    NOTE_G3,4, NOTE_B3,8, NOTE_D4,-4, NOTE_B3,4,
+
+    NOTE_G3,-1,
+
+};
+int melody33[] = {  NOTE_C4,-8, NOTE_E4,16, NOTE_G4,8, NOTE_C5,8, NOTE_E5,8, NOTE_D5,8, NOTE_C5,8, NOTE_A4,8,
+  NOTE_FS4,8, NOTE_G4,8, REST,4, REST,2,
+  NOTE_C4,-8, NOTE_E4,16, NOTE_G4,8, NOTE_C5,8, NOTE_E5,8, NOTE_D5,8, NOTE_C5,8, NOTE_A4,8,
+  NOTE_G4,-2, NOTE_A4,8, NOTE_DS4,1,
+
+  NOTE_A4,8,
+  NOTE_E4,8, NOTE_C4,8, REST,4, REST,2,
+  NOTE_C4,-8, NOTE_E4,16, NOTE_G4,8, NOTE_C5,8, NOTE_E5,8, NOTE_D5,8, NOTE_C5,8, NOTE_A4,8,
+  NOTE_FS4,8, NOTE_G4,8, REST,4, REST,4, REST,8, NOTE_G4,8,
+  NOTE_D5,4, NOTE_D5,4, NOTE_B4,8, NOTE_G4,8, REST,8, NOTE_G4,8,
+
+  NOTE_C5,4, NOTE_C5,4, NOTE_AS4,16, NOTE_C5,16, NOTE_AS4,16, NOTE_G4,16, NOTE_F4,8, NOTE_DS4,8,
+  NOTE_FS4,4, NOTE_FS4,4, NOTE_F4,16, NOTE_G4,16, NOTE_F4,16, NOTE_DS4,16, NOTE_C4,8, NOTE_G4,8,
+  NOTE_AS4,8, NOTE_C5,8, REST,4, REST,2,
+};
+int melody34[] = {  NOTE_C4,4, NOTE_C4,8,
+  NOTE_D4,-4, NOTE_C4,-4, NOTE_F4,-4,
+  NOTE_E4,-2, NOTE_C4,4, NOTE_C4,8,
+  NOTE_D4,-4, NOTE_C4,-4, NOTE_G4,-4,
+  NOTE_F4,-2, NOTE_C4,4, NOTE_C4,8,
+
+  NOTE_C5,-4, NOTE_A4,-4, NOTE_F4,-4,
+  NOTE_E4,-4, NOTE_D4,-4, NOTE_AS4,4, NOTE_AS4,8,
+  NOTE_A4,-4, NOTE_F4,-4, NOTE_G4,-4,
+  NOTE_F4,-2,
+
+};
+int melody35[] = { NOTE_C5,4, //1
+  NOTE_F5,4, NOTE_F5,8, NOTE_G5,8, NOTE_F5,8, NOTE_E5,8,
+  NOTE_D5,4, NOTE_D5,4, NOTE_D5,4,
+  NOTE_G5,4, NOTE_G5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F5,8,
+  NOTE_E5,4, NOTE_C5,4, NOTE_C5,4,
+  NOTE_A5,4, NOTE_A5,8, NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8,
+  NOTE_F5,4, NOTE_D5,4, NOTE_C5,8, NOTE_C5,8,
+  NOTE_D5,4, NOTE_G5,4, NOTE_E5,4,
+
+  NOTE_F5,2, NOTE_C5,4, //8
+  NOTE_F5,4, NOTE_F5,8, NOTE_G5,8, NOTE_F5,8, NOTE_E5,8,
+  NOTE_D5,4, NOTE_D5,4, NOTE_D5,4,
+  NOTE_G5,4, NOTE_G5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F5,8,
+  NOTE_E5,4, NOTE_C5,4, NOTE_C5,4,
+  NOTE_A5,4, NOTE_A5,8, NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8,
+  NOTE_F5,4, NOTE_D5,4, NOTE_C5,8, NOTE_C5,8,
+  NOTE_D5,4, NOTE_G5,4, NOTE_E5,4,
+  NOTE_F5,2, NOTE_C5,4,
+
+  NOTE_F5,4, NOTE_F5,4, NOTE_F5,4,//17
+  NOTE_E5,2, NOTE_E5,4,
+  NOTE_F5,4, NOTE_E5,4, NOTE_D5,4,
+  NOTE_C5,2, NOTE_A5,4,
+  NOTE_AS5,4, NOTE_A5,4, NOTE_G5,4,
+  NOTE_C6,4, NOTE_C5,4, NOTE_C5,8, NOTE_C5,8,
+  NOTE_D5,4, NOTE_G5,4, NOTE_E5,4,
+  NOTE_F5,2, NOTE_C5,4,
+  NOTE_F5,4, NOTE_F5,8, NOTE_G5,8, NOTE_F5,8, NOTE_E5,8,
+  NOTE_D5,4, NOTE_D5,4, NOTE_D5,4,
+
+  NOTE_G5,4, NOTE_G5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F5,8, //27
+  NOTE_E5,4, NOTE_C5,4, NOTE_C5,4,
+  NOTE_A5,4, NOTE_A5,8, NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8,
+  NOTE_F5,4, NOTE_D5,4, NOTE_C5,8, NOTE_C5,8,
+  NOTE_D5,4, NOTE_G5,4, NOTE_E5,4,
+  NOTE_F5,2, NOTE_C5,4,
+  NOTE_F5,4, NOTE_F5,4, NOTE_F5,4,
+  NOTE_E5,2, NOTE_E5,4,
+  NOTE_F5,4, NOTE_E5,4, NOTE_D5,4,
+
+  NOTE_C5,2, NOTE_A5,4,//36
+  NOTE_AS5,4, NOTE_A5,4, NOTE_G5,4,
+  NOTE_C6,4, NOTE_C5,4, NOTE_C5,8, NOTE_C5,8,
+  NOTE_D5,4, NOTE_G5,4, NOTE_E5,4,
+  NOTE_F5,2, NOTE_C5,4,
+  NOTE_F5,4, NOTE_F5,8, NOTE_G5,8, NOTE_F5,8, NOTE_E5,8,
+  NOTE_D5,4, NOTE_D5,4, NOTE_D5,4,
+  NOTE_G5,4, NOTE_G5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F5,8,
+  NOTE_E5,4, NOTE_C5,4, NOTE_C5,4,
+
+  NOTE_A5,4, NOTE_A5,8, NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8,//45
+  NOTE_F5,4, NOTE_D5,4, NOTE_C5,8, NOTE_C5,8,
+  NOTE_D5,4, NOTE_G5,4, NOTE_E5,4,
+  NOTE_F5,2, NOTE_C5,4,
+  NOTE_F5,4, NOTE_F5,8, NOTE_G5,8, NOTE_F5,8, NOTE_E5,8,
+  NOTE_D5,4, NOTE_D5,4, NOTE_D5,4,
+  NOTE_G5,4, NOTE_G5,8, NOTE_A5,8, NOTE_G5,8, NOTE_F5,8,
+  NOTE_E5,4, NOTE_C5,4, NOTE_C5,4,
+
+  NOTE_A5,4, NOTE_A5,8, NOTE_AS5,8, NOTE_A5,8, NOTE_G5,8, //53
+  NOTE_F5,4, NOTE_D5,4, NOTE_C5,8, NOTE_C5,8,
+  NOTE_D5,4, NOTE_G5,4, NOTE_E5,4,
+  NOTE_F5,2, REST,4
+};
+int melody36[] = {  NOTE_G4,-4, NOTE_A4,8, NOTE_G4,4,
+  NOTE_E4,-2,
+  NOTE_G4,-4, NOTE_A4,8, NOTE_G4,4,
+  NOTE_E4,-2,
+  NOTE_D5,2, NOTE_D5,4,
+  NOTE_B4,-2,
+  NOTE_C5,2, NOTE_C5,4,
+  NOTE_G4,-2,
+
+  NOTE_A4,2, NOTE_A4,4,
+  NOTE_C5,-4, NOTE_B4,8, NOTE_A4,4,
+  NOTE_G4,-4, NOTE_A4,8, NOTE_G4,4,
+  NOTE_E4,-2,
+  NOTE_A4,2, NOTE_A4,4,
+  NOTE_C5,-4, NOTE_B4,8, NOTE_A4,4,
+  NOTE_G4,-4, NOTE_A4,8, NOTE_G4,4,
+  NOTE_E4,-2,
+
+  NOTE_D5,2, NOTE_D5,4,
+  NOTE_F5,-4, NOTE_D5,8, NOTE_B4,4,
+  NOTE_C5,-2,
+  NOTE_E5,-2,
+  NOTE_C5,4, NOTE_G4,4, NOTE_E4,4,
+  NOTE_G4,-4, NOTE_F4,8, NOTE_D4,4,
+  NOTE_C4,-2,
+  NOTE_C4,-1,};
+
+
+
+void tone(uint8_t pin, unsigned int frequency, unsigned long duration, uint8_t channel)
+{
+    if (ledcRead(channel)) {
+        log_e("Tone channel %d is already in use", channel);
+        return;
+    }
+    ledcAttachPin(pin, channel);
+    ledcWriteTone(channel, frequency);
+    if (duration) {
+        delay(duration);
+        noTone(pin, channel);
+    }
+}
+
+void noTone(uint8_t pin, uint8_t channel)
+{
+    ledcDetachPin(pin);
+    ledcWrite(channel, 0);
+}
+
+String nomi[37] = {"Cantina Band from Star Wars","Imperial March from Star Wars","Hedwig’s theme from Harry Potter","Star Wars theme","Pulo da gaita from the Brazilian Movie O Auto da Compadecida","Star Trek fanfare","Game of Thrones","The Godfather","Bloody Tears from Castlevania II","Green Hill Zone from Sonic the Hedgehog","Mii channel theme","Professor Layton’s theme from Professor Layton and the Curious Village","Song of stomrs from The Legend of Zelda Ocarina of time","Super Mario Bros overworld theme","Tetris theme (Korobeiniki)","Zelda’s Lullaby from The Legend of Zelda Ocarina of time","The Legend of Zelda for the NES","DOOM","Jigglypuff’s Song from Pokemon","Vampire Killer from Castlevania","Cannon in D – Pachelbel","Greensleeves","Ode to Joy – Beethoven’s Symphony No. 9","Prince Igor – Borodin’s Polovtsian Dances","Minuet in G – Christian Petzold","Brahms’ Lullaby (Wiegenlied)","Fur Elise – Beethoven","Asa Branca – Luiz Gonzaga","Pink Panther Theme","Take on me A-ha","The lick","The Lion sleeps tonight (A-weema-weh)","Keyboard cat","Elephant Walk","Happy Birthday","We Wish You a Merry Christmas","Silent Night"};
+
+struct NOTE
+{
+  String title;
+  int *note;
+  uint16_t numElements;
+};
+
+NOTE songs[] =
+{
+{nomi[0],melody0, NUMELEMENTS(melody0)},
+{nomi[1],melody1, NUMELEMENTS(melody1)},
+{nomi[2],melody2, NUMELEMENTS(melody2)},
+{nomi[3],melody3, NUMELEMENTS(melody3)},
+{nomi[4],melody4, NUMELEMENTS(melody4)},
+{nomi[5],melody5, NUMELEMENTS(melody5)},
+{nomi[6],melody6, NUMELEMENTS(melody6)},
+{nomi[7],melody7, NUMELEMENTS(melody7)},
+{nomi[8],melody8, NUMELEMENTS(melody8)},
+{nomi[9],melody9, NUMELEMENTS(melody9)},
+{nomi[10],melody10, NUMELEMENTS(melody10)},
+{nomi[11],melody11, NUMELEMENTS(melody11)},
+{nomi[12],melody12, NUMELEMENTS(melody12)},
+{nomi[13],melody13, NUMELEMENTS(melody13)},
+{nomi[14],melody14, NUMELEMENTS(melody14)},
+{nomi[15],melody15, NUMELEMENTS(melody15)},
+{nomi[16],melody16, NUMELEMENTS(melody16)},
+{nomi[17],melody17, NUMELEMENTS(melody17)},
+{nomi[18],melody18, NUMELEMENTS(melody18)},
+{nomi[19],melody19, NUMELEMENTS(melody19)},
+{nomi[20],melody20, NUMELEMENTS(melody20)},
+{nomi[21],melody21, NUMELEMENTS(melody21)},
+{nomi[22],melody22, NUMELEMENTS(melody22)},
+{nomi[23],melody23, NUMELEMENTS(melody23)},
+{nomi[24],melody24, NUMELEMENTS(melody24)},
+{nomi[25],melody25, NUMELEMENTS(melody25)},
+{nomi[26],melody26, NUMELEMENTS(melody26)},
+{nomi[27],melody27, NUMELEMENTS(melody27)},
+{nomi[28],melody28, NUMELEMENTS(melody28)},
+{nomi[29],melody29, NUMELEMENTS(melody29)},
+{nomi[30],melody30, NUMELEMENTS(melody30)},
+{nomi[31],melody31, NUMELEMENTS(melody31)},
+{nomi[32],melody32, NUMELEMENTS(melody32)},
+{nomi[33],melody33, NUMELEMENTS(melody33)},
+{nomi[34],melody34, NUMELEMENTS(melody34)},
+{nomi[35],melody35, NUMELEMENTS(melody35)},
+{nomi[36],melody36, NUMELEMENTS(melody36)},
+};
+
+int tempo = 120;
+
+void sing(int song) {
+  int buzzer = 13;
+  int wholenote = (60000 * 2) / tempo;
+  int divider = 0, noteDuration = 0;
+  for (int thisNote = 0; thisNote < songs[song].numElements; thisNote = thisNote + 2) {
+    if ( digitalRead(BUTTON1) == 0 ) { tempo-=20; }
+    if ( digitalRead(BUTTON2) == 0 ) { tempo+=20; }
+    if ( digitalRead(BUTTON4) == 0 ) { delay(200); break; }
+    wholenote = (60000 * 2) / tempo;
+    divider = songs[song].note[thisNote + 1];
+    if (divider > 0) {
+      noteDuration = (wholenote) / divider;
+    } else if (divider < 0) {
+      noteDuration = (wholenote) / abs(divider);
+      noteDuration *= 1.5;
+    }
+    colora(1,1,0);
+    tone(buzzer, songs[song].note[thisNote], noteDuration*0.9,0);
+    colora(0,1,1);
+    delay(noteDuration);
+    noTone(buzzer,0);
+  }
+  colora(0,1,0);
+}
+
+void setup()
+{
+    Serial.begin(115200);
+    Serial.println("Parto...");
+    lcd.begin(20, 4);
+    lcd.clear();
+    colora(1,1,0);
+    dht_sensor.begin();
+    pinMode(BUTTON1, INPUT_PULLUP);
+    pinMode(BUTTON2, INPUT_PULLUP);
+    pinMode(BUTTON3, INPUT_PULLUP);
+    pinMode(BUTTON4, INPUT_PULLUP);
+    pinMode(13, OUTPUT);//buzzer
+    pinMode(color[0], OUTPUT);
+    pinMode(color[1], OUTPUT);
+    pinMode(color[2], OUTPUT);
+    preferences.begin("credentials", false);
+    ssid = preferences.getString("ssid", "");
+    psw = preferences.getString("psw", "");
+    preferences.end();
+    if (ssid != ""){
+      collega(ssid, psw);
+    }
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_15,0);
+}
+
+void loop(){
+  float humi  = dht_sensor.readHumidity();
+  float tempC = dht_sensor.readTemperature();
+
+
+  if ( songlist == true ) {
+    n = NUMELEMENTS(songs);
+    if ( digitalRead(BUTTON4) == 0 ) { delay(200); songlist = false; colora(0,1,0); }
+    else if ( digitalRead(BUTTON1) == 0 && sel+1 < n ) { sel++; delay(200); }
+    else if ( digitalRead(BUTTON2) == 0 && sel > 0 ) { sel--; delay(200); }
+    else if ( digitalRead(BUTTON3) == 0 ) { sing(sel); }
+
+        lcd.setCursor(0,0);
+        lcdprint((String)n+" canzoni trovate");
+        for (int i = 0; i < n; ++i) {
+          String riga = "";
+          if ( sel == i ) { riga += ">"; }
+          riga+=(songs[i].title.c_str());
+          if ( i >= sel && i < sel + 3 ) {
+            lcd.setCursor(0,i-sel+1);
+            lcdprint(riga);
+          }
+          if ( n-sel < 3 ) {
+            for (int c=3; c > n-sel; c--){
+              lcd.setCursor(0,c);
+              lcdprint(" ");
+            }
+          }
+        }
+
+  } else if ( scan == true ) {
+
+   if ( digitalRead(BUTTON3) == 0 && conn == false ) {
+     conn = true;
+     psw="";
+     pos=0;
+     wpsw = 0;
+     delay(500);
+     lcd.setCursor(0,2);
+     lcdprint(" ");
+   } else if ( conn == true ){
+     if ( digitalRead(BUTTON1) == 0 && pos < alfa.length()-1 ) { pos++; delay(150); }
+     if ( digitalRead(BUTTON2) == 0 && pos > 0 ) { pos--; delay(150); }
+     if ( digitalRead(BUTTON3) == 0 ) { psw+=alfa.charAt(pos); wpsw++; delay(350); }
+     if ( digitalRead(BUTTON4) == 0 ) {
+        scan = false;
+        psw+=alfa.charAt(pos);
+        preferences.begin("credentials", false);
+        preferences.putString("ssid", WiFi.SSID(sel));
+        preferences.putString("psw", psw);
+        lcd.setCursor(0,3);
+        lcdprint("Connessione in corso");
+        preferences.end();
+        Serial.println("Connessione Wi-Fi richiesta");
+        collega(WiFi.SSID(sel),psw);
+      }
+      lcd.setCursor(0,0);
+      lcdprint("Rete: "+WiFi.SSID(sel));
+      lcd.setCursor(0,1);
+      lcdprint("Inserisci Password:");
+      lcd.setCursor(wpsw,2);
+      lcd.print((String)alfa.charAt(pos));
+      lcd.setCursor(wpsw,2);
+      lcd.blink();
+      delay(50);
+      lcd.noBlink();
+      lcd.setCursor(0,3);
+      lcdprint("Rosso per Salvare");
+   } else {
+      if ( digitalRead(BUTTON4) == 0 ) { scan = false; ESP.restart(); }
+        colora(0,0,1);
+        if ( digitalRead(BUTTON1) == 0 && sel+1 < n ) { sel++; delay(200); }
+        else if ( digitalRead(BUTTON2) == 0 && sel > 0 ) { sel--; delay(200); }
+        lcd.setCursor(0,0);
+        lcdprint((String)n+" reti trovate");
+        for (int i = 0; i < n; ++i) {
+          String riga = "";
+          if ( sel == i ) { riga += ">"; }
+          riga+=(WiFi.SSID(i).c_str());
+          if ( i >= sel && i < sel + 3 ) {
+            lcd.setCursor(0,i-sel+1);
+            lcdprint(riga);
+          }
+          if ( n-sel < 3 ) {
+            for (int c=3; c > n-sel; c--){
+              lcd.setCursor(0,c);
+              lcdprint(" ");
+            }
+          }
+        }
+    }
+
+  } else if ( digitalRead(BUTTON1) == 0 ) {
+//    sing(0);
+  } else if ( digitalRead(BUTTON2) == 0 ) {
+    sel = 0;
+    songlist = true;
+  } else if ( digitalRead(BUTTON3) == 0 ) {
+    scan = true;
+    conn = false;
+    colora(1,0,0);
+    lcd.setCursor(0,0);
+    lcdprint("Cerco Reti Wifi");
+    n = WiFi.scanNetworks();
+    sel = 0;
+    colora(0,1,0);
+    lcd.setCursor(0,0);
+    lcdprint("Scansione Completata");
+    for (int i = 0; i < n; ++i) {
+      Serial.println((String)WiFi.SSID(i)+" "+(String)WiFi.encryptionType(i));
+    }
+    delay(1000);
+    if ( n < 0 ){ scan=false;}
+  } else if ( scan == false ) {
+    if ( digitalRead(BUTTON4) == 0 ) { delay(500); goToDeepSleep(); }
+
+    if ( WiFi.status() == WL_CONNECTED ) {
+      lcd.setCursor(0,0);
+      lcdprint(printLocalTime());
+      lcd.setCursor(0,1);
+      lcdprint((String)"IP: "+WiFi.localIP().toString());
+    } else {
+      lcd.setCursor(0,0);
+      lcdprint("Blu Config Wifi");
+      lcd.setCursor(0,1);
+      lcdprint("Rosso Sospende");
+    }
+    lcd.setCursor(0,2);
+    lcdprint((String)"Umidita: "+humi);
+    lcd.setCursor(0,3);
+    lcdprint((String)"Temperatura: "+tempC);
+}
+
+    if ( ( digitalRead(BUTTON1) == 0 || digitalRead(BUTTON2) == 0 || digitalRead(BUTTON3) == 0 ) && pressed == false) { colbuf[0] = digitalRead(color[0]); colbuf[1] = digitalRead(color[1]); colbuf[2] = digitalRead(color[2]);}
+    if ( digitalRead(BUTTON1) == 0 && pressed == false) { colora(1,0,1); pressed = true; }
+    if ( digitalRead(BUTTON2) == 0 && pressed == false) { colora(1,1,0); pressed = true; }
+    if ( digitalRead(BUTTON3) == 0 && pressed == false) { colora(0,0,1); pressed = true; }
+    if ( digitalRead(BUTTON1) == 1 && digitalRead(BUTTON2) == 1 && digitalRead(BUTTON3) == 1 && pressed == true) { colora(colbuf[0],colbuf[1],colbuf[2]); pressed = false; }
+
+
+  if ( WiFi.status() == WL_CONNECTED ){
+  server.handleClient();
+  delay(1);
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= interval) {
+    previousMillis = currentMillis;
+    ledState = not(ledState);
+    digitalWrite(led, ledState);
+  }
+  }
+}
+
+/*
+void test(size_t size, int *var){
+  for (int i=0; i<size;i++){
+    Serial.println(var[i]);
+  }
+}
+
+double getAverage(int arr[], int size) {
+  int i, sum = 0;
+  double avg;
+
+   for (i = 0; i < size; ++i) {
+      sum += arr[i];
+   }
+   avg = double(sum) / size;
+
+   return avg;
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  int var[] = {1,2,3,4,5,6,8,10};
+  Serial.println(getAverage(var,sizeof(var)/sizeof(*var)));
+//  test(sizeof(var)/sizeof(*var),var);
+  delay(5000); // this speeds up the simulation
+}
+*/

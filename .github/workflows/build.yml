@@ -1,0 +1,21 @@
+name: Build firmware
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install platformio==6.1.19
+      - run: pio run -e lolin32
+      - uses: actions/upload-artifact@v4
+        with:
+          name: StazioneMeteo-lolin32
+          path: .pio/build/lolin32/firmware.bin
