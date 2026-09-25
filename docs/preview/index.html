@@ -1,0 +1,154 @@
+
+<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>stazionemeteo</title>
+<style>
+:root{color-scheme:light dark;--bg:#0b1118;--panel:#111a24;--panel2:#16212d;--line:#263646;--txt:#edf4fb;--muted:#9db0c3;--accent:#4ea1ff;--ok:#38c77a;--warn:#ffb84d;--bad:#ff6b6b;--shadow:0 8px 28px #0005}
+@media(prefers-color-scheme:light){:root{--bg:#eef3f8;--panel:#fff;--panel2:#f7f9fc;--line:#d8e1ea;--txt:#15202b;--muted:#617386;--accent:#006edc;--ok:#17854f;--warn:#a56200;--bad:#c72d2d;--shadow:0 6px 24px #22334418}}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}button,input,select,summary{font:inherit}
+header{position:sticky;top:0;z-index:10;background:var(--bg);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}.head{max-width:1180px;margin:auto;padding:12px clamp(12px,3vw,24px);display:flex;align-items:center;gap:12px}.brand{font-weight:800;font-size:clamp(18px,3vw,24px);min-width:0;overflow:hidden;text-overflow:ellipsis}.pill{margin-left:auto;border:1px solid var(--line);padding:5px 9px;border-radius:99px;color:var(--muted);white-space:nowrap}
+main{max-width:1180px;margin:auto;padding:clamp(12px,3vw,24px);display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:clamp(10px,2vw,16px)}.card{grid-column:span 6;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:clamp(13px,2.5vw,19px);box-shadow:var(--shadow);min-width:0}.wide{grid-column:1/-1}.third{grid-column:span 4}h2{margin:0 0 12px;font-size:17px}.muted{color:var(--muted)}.statusline{word-break:break-word}.metrics{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}.metric{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px}.value{font-size:clamp(28px,6vw,42px);font-weight:800;letter-spacing:-1px}.unit{color:var(--muted)}
+.lcdbezel{background:linear-gradient(145deg,#333,#111);border:1px solid #444;border-radius:14px;padding:clamp(8px,2vw,14px);box-shadow:inset 0 1px #ffffff15,0 8px 22px #0005}.lcdglass{background:linear-gradient(135deg,#b8d77f,#9dbc68);border:1px solid #6e8747;border-radius:7px;padding:clamp(6px,1.5vw,10px);box-shadow:inset 0 0 22px #49612755}.lcdcanvas{display:block;width:100%;height:auto;aspect-ratio:2.5/1;image-rendering:pixelated}.keygrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}.key{min-height:88px;text-align:left;display:flex;flex-direction:column;justify-content:space-between}.key b{font-size:15px}.key small{display:block;color:var(--muted);line-height:1.25;margin-top:7px}.key:disabled{opacity:.45;cursor:not-allowed}
+button,.button{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel2);color:var(--txt);cursor:pointer;transition:.15s}button:hover:not(:disabled){border-color:var(--accent);transform:translateY(-1px)}button.primary{background:var(--accent);color:#fff;border-color:transparent}.danger{color:var(--bad)}input,select{width:100%;padding:10px 11px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--txt)}input[type=checkbox]{width:auto}.clockpreview{margin-top:10px;background:#a9c875;color:#152108;border-radius:10px;padding:12px;text-align:center;font:800 clamp(28px,8vw,50px)/1 ui-monospace,monospace;letter-spacing:.08em}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.field{display:block;margin:7px 0;color:var(--muted);font-size:13px}.field input{margin-top:4px;color:var(--txt)}.net{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}.net .grow{flex:1;min-width:0}.net b{word-break:break-word}.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}details{border-top:1px solid var(--line);margin-top:12px;padding-top:10px}summary{cursor:pointer;font-weight:650}.diag{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 12px}.diag div{min-width:0;overflow-wrap:anywhere}.log{max-height:280px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:8px;font:12px/1.5 ui-monospace,monospace}.log div{padding:3px 0;border-bottom:1px dotted var(--line)}canvas{width:100%;height:230px;background:var(--panel2);border:1px solid var(--line);border-radius:10px}.alarm{color:var(--bad);font-weight:700}.ok{color:var(--ok)}.ledline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:11px}.rgbdot{width:18px;height:18px;border-radius:50%;border:1px solid var(--line);box-shadow:0 0 12px #0006;display:inline-block}.timerstate{color:var(--muted);font-size:13px}
+@media(max-width:900px){.card,.third{grid-column:1/-1}.keygrid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:540px){main{padding:10px;gap:10px}.head{padding:10px}.pill{font-size:12px}.card{padding:12px;border-radius:13px}.metrics,.row,.diag{grid-template-columns:1fr}.keygrid{grid-template-columns:1fr 1fr}.key{min-height:96px}.actions>button{flex:1 1 140px}.net{align-items:flex-start;flex-wrap:wrap}.net button{width:100%}canvas{height:190px}}
+</style></head><body>
+<header><div class="head"><div id="brand" class="brand">stazionemeteo</div><div id="fw" class="pill">firmware</div></div></header>
+<main>
+<section class="card third"><h2>Meteo</h2><div class="metrics"><div class="metric"><div id="temp" class="value">--</div><div class="unit">Temperatura °C</div></div><div class="metric"><div id="hum" class="value">--</div><div class="unit">Umidità %</div></div></div><p id="alarmState" class="muted"></p><p id="status" class="muted statusline"></p></section>
+<section class="card"><h2>Replica LCD 20×4</h2><div class="lcdbezel"><div class="lcdglass"><canvas id="lcdCanvas" class="lcdcanvas" width="1000" height="400" aria-label="Replica dot-matrix del display LCD 20 per 4"></canvas></div></div><div class="ledline"><span id="rgbLed" class="rgbdot"></span><span>LED RGB: <b id="rgbText">--</b></span><span id="timerState" class="timerstate"></span></div><div id="keys" class="keygrid">
+<button class="key" onclick="press(1)"><b>Tasto 1 · Schermata</b><small>Passa tra meteo e orologio fullscreen</small></button>
+<button class="key" onclick="press(2)"><b>Tasto 2 · Musica</b><small>Apre il menu delle melodie</small></button>
+<button class="key" onclick="press(3)"><b>Tasto 3 · Timer</b><small>Apre cronometro, countdown e Nomi Cose e Città</small></button>
+<button class="key" onclick="press(4)"><b>Tasto 4 · Indietro / Sleep</b><small>Torna indietro; dalla home entra in deep sleep</small></button>
+</div></section>
+<section class="card wide"><h2>Storico locale ~24 ore</h2><canvas id="chart"></canvas><div class="muted">Campionamento ogni 5 minuti; lo storico è in RAM e riparte dopo un riavvio.</div></section>
+<section class="card"><h2>Wi‑Fi</h2><div class="actions"><button class="primary" onclick="scan()">Scansiona adesso</button><span id="scanstate" class="muted">Nessuna scansione automatica</span></div><div id="nets"></div><details><summary>Ultime 3 reti memorizzate</summary><div id="saved"></div></details></section>
+<section class="card"><h2>MQTT</h2><form id="mqttForm"><label><input id="mqen" type="checkbox"> Abilita MQTT</label><label class="field">Server<input id="mqhost" placeholder="192.168.1.10"></label><div class="row"><label class="field">Porta<input id="mqport" type="number" value="1883"></label><label class="field">Topic sensore<input id="mqtopic"></label></div><div class="row"><label class="field">Username<input id="mquser"></label><label class="field">Password<input id="mqpass" type="password" placeholder="vuoto = non modificare"></label></div><button type="submit">Salva MQTT</button> <span id="mqmsg" class="muted"></span></form></section>
+<section class="card"><h2>Allarmi</h2><form id="alarmForm"><label><input id="alen" type="checkbox"> Abilita allarmi</label><div class="row"><label class="field">Temperatura minima °C<input id="tmin" type="number" step="0.1"></label><label class="field">Temperatura massima °C<input id="tmax" type="number" step="0.1"></label></div><div class="row"><label class="field">Umidità minima %<input id="hmin" type="number" step="0.1"></label><label class="field">Umidità massima %<input id="hmax" type="number" step="0.1"></label></div><label class="field">Topic MQTT allarmi<input id="altopic"></label><button type="submit">Salva allarmi</button> <span id="almsg" class="muted"></span></form></section>
+<section class="card"><h2>Nome dispositivo</h2><p class="muted">Determina hostname, mDNS e nome della rete AP. Il default resta <b>stazionemeteo</b>.</p><form id="nameForm"><label class="field">Nome<input id="devname" maxlength="31"></label><button type="submit">Salva e riavvia</button></form></section>
+<section class="card"><h2>Orologio fullscreen</h2><p class="muted">Scegli il disegno delle cifre sul display 20×4. La modifica è immediata e viene memorizzata.</p><form id="clockForm"><label class="field">Stile<select id="clockstyle"><option value="0">Morbido</option><option value="1">Arrotondato</option><option value="2">Sottile</option><option value="3">Punti</option><option value="4">Tech</option></select></label><button type="submit">Applica stile</button> <span id="clockmsg" class="muted"></span></form><div class="lcdbezel" style="margin-top:10px"><div class="lcdglass"><canvas id="clockPreview" class="lcdcanvas" width="1000" height="400"></canvas></div></div></section>
+<section class="card"><h2>Diagnostica</h2><div id="diag" class="diag"></div><p><a class="button" href="/metrics" target="_blank">Apri /metrics Prometheus</a></p></section>
+<section class="card"><h2>Backup e ripristino</h2><p class="muted">Il backup contiene anche password Wi‑Fi e MQTT: trattalo come file riservato.</p><div class="actions"><button onclick="backupConfig()">Scarica backup JSON</button><input id="restoreFile" type="file" accept="application/json,.json"><button onclick="restoreConfig()">Ripristina e riavvia</button></div><p id="restoreMsg" class="muted"></p></section>
+<section class="card"><h2>Aggiornamento firmware OTA</h2><p class="muted">Versione corrente: <span id="fw2"></span>. Il firmware viene verificato da Update prima dell'attivazione.</p><form id="otaForm"><input id="fwfile" type="file" accept=".bin" required><button type="submit">Carica firmware</button></form><p id="otaMsg" class="muted"></p></section>
+<section class="card wide"><h2>Log eventi</h2><div class="actions"><button onclick="loadLog()">Aggiorna log</button><button class="danger" onclick="clearLog()">Cancella log</button></div><div id="log" class="log"></div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);const esc=s=>(s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let settingsLoaded=false,lastHistory=0;
+async function api(url,opt){opt=opt||{};if(!opt.cache)opt.cache='no-store';let r=await fetch(url,opt);if(!r.ok)throw new Error(await r.text());return r}
+function keyHtml(k){return `<button class="key" ${k.enabled?'':'disabled'} onclick="press(${k.id})"><b>Tasto ${k.id} · ${esc(k.title)}</b><small>${esc(k.hint)}</small></button>`}
+const ROM5={
+' ':[0,0,0,0,0,0,0,0],':':[0,4,4,0,0,4,4,0],'.':[0,0,0,0,0,0,6,6],'-':[0,0,0,31,0,0,0,0],
+'/':[1,2,4,8,16,0,0,0],'%':[17,2,4,8,17,0,0,0],'+':[0,4,4,31,4,4,0,0],
+'>':[16,8,4,2,4,8,16,0],'<':[1,2,4,8,4,2,1,0],'=':[0,31,0,31,0,0,0,0],
+'!':[4,4,4,4,4,0,4,0],'?':[14,17,1,2,4,0,4,0],'_':[0,0,0,0,0,0,31,0],
+'0':[14,17,19,21,25,17,14,0],'1':[4,12,4,4,4,4,14,0],'2':[14,17,1,2,4,8,31,0],
+'3':[30,1,1,14,1,1,30,0],'4':[2,6,10,18,31,2,2,0],'5':[31,16,16,30,1,1,30,0],
+'6':[14,16,16,30,17,17,14,0],'7':[31,1,2,4,8,8,8,0],'8':[14,17,17,14,17,17,14,0],
+'9':[14,17,17,15,1,1,14,0],
+'A':[14,17,17,31,17,17,17,0],'B':[30,17,17,30,17,17,30,0],'C':[14,17,16,16,16,17,14,0],
+'D':[30,17,17,17,17,17,30,0],'E':[31,16,16,30,16,16,31,0],'F':[31,16,16,30,16,16,16,0],
+'G':[14,17,16,23,17,17,15,0],'H':[17,17,17,31,17,17,17,0],'I':[14,4,4,4,4,4,14,0],
+'J':[7,2,2,2,18,18,12,0],'K':[17,18,20,24,20,18,17,0],'L':[16,16,16,16,16,16,31,0],
+'M':[17,27,21,21,17,17,17,0],'N':[17,25,21,19,17,17,17,0],'O':[14,17,17,17,17,17,14,0],
+'P':[30,17,17,30,16,16,16,0],'Q':[14,17,17,17,21,18,13,0],'R':[30,17,17,30,20,18,17,0],
+'S':[15,16,16,14,1,1,30,0],'T':[31,4,4,4,4,4,4,0],'U':[17,17,17,17,17,17,14,0],
+'V':[17,17,17,17,17,10,4,0],'W':[17,17,17,17,21,21,10,0],'X':[17,17,10,4,10,17,17,0],
+'Y':[17,17,10,4,4,4,4,0],'Z':[31,1,2,4,8,16,31,0],
+'a':[0,0,14,1,15,17,15,0],'b':[16,16,22,25,17,17,30,0],'c':[0,0,14,17,16,17,14,0],
+'d':[1,1,13,19,17,17,15,0],'e':[0,0,14,17,31,16,14,0],'f':[6,9,8,28,8,8,8,0],
+'g':[0,0,15,17,15,1,14,0],'h':[16,16,22,25,17,17,17,0],'i':[4,0,12,4,4,4,14,0],
+'j':[2,0,6,2,2,18,12,0],'k':[16,16,18,20,24,20,18,0],'l':[12,4,4,4,4,4,14,0],
+'m':[0,0,26,21,21,21,21,0],'n':[0,0,22,25,17,17,17,0],'o':[0,0,14,17,17,17,14,0],
+'p':[0,0,30,17,30,16,16,0],'q':[0,0,15,17,15,1,1,0],'r':[0,0,22,25,16,16,16,0],
+'s':[0,0,15,16,14,1,30,0],'t':[8,8,28,8,8,9,6,0],'u':[0,0,17,17,17,19,13,0],
+'v':[0,0,17,17,17,10,4,0],'w':[0,0,17,17,21,21,10,0],'x':[0,0,17,10,4,10,17,0],
+'y':[0,0,17,17,15,1,14,0],'z':[0,0,31,2,4,8,31,0]
+ };
+function drawLcd(canvas,cells,custom){
+ if(!canvas)return;
+ const ctx=canvas.getContext('2d');
+ if(!ctx)return;
+ const cols=20,rows=4;
+ if(!Array.isArray(cells)||cells.length<cols*rows)cells=Array(cols*rows).fill(32);
+ if(!Array.isArray(custom))custom=[];
+ // Keep an exact 20x4 geometry while using a high-resolution internal canvas.
+ const W=1000,H=400,cw=W/cols,ch=H/rows;
+ if(canvas.width!==W)canvas.width=W;if(canvas.height!==H)canvas.height=H;
+ ctx.clearRect(0,0,W,H);
+ ctx.fillStyle='#a9c978';ctx.fillRect(0,0,W,H);
+ // Subtle per-character blocks like a physical HD44780 glass/module.
+ for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+   const x=c*cw,y=r*ch;
+   ctx.fillStyle=(r+c)%2?'rgba(70,95,43,.018)':'rgba(255,255,255,.012)';
+   ctx.fillRect(x+1,y+1,cw-2,ch-2);
+ }
+ const charPadX=7,charPadY=7;
+ const gridW=cw-charPadX*2,gridH=ch-charPadY*2;
+ const stepX=gridW/5,stepY=gridH/8;
+ const dotR=Math.max(1.7,Math.min(stepX,stepY)*0.31);
+ const on='#1c2e13',off='rgba(35,55,23,.105)';
+ function bitmapFor(code){
+   code=Number(code)||0;
+   if(code>=0&&code<=7&&Array.isArray(custom[code]))return custom[code];
+   const ch=String.fromCharCode(code);
+   return ROM5[ch]||ROM5[ch.toUpperCase()]||ROM5['?'];
+ }
+ for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){
+   const bmp=bitmapFor(cells[r*cols+c]);
+   const ox=c*cw+charPadX,oy=r*ch+charPadY;
+   for(let py=0;py<8;py++){
+     const bits=Number(bmp[py]||0);
+     for(let px=0;px<5;px++){
+       const active=!!(bits&(1<<(4-px)));
+       const cx=ox+(px+.5)*stepX,cy=oy+(py+.5)*stepY;
+       ctx.beginPath();ctx.arc(cx,cy,dotR,0,Math.PI*2);
+       ctx.fillStyle=active?on:off;ctx.fill();
+     }
+   }
+ }
+}
+const CLOCK_SEG=[63,6,91,79,102,109,125,7,127,111];
+const CLOCK_GLYPHS_JS=[
+ [[0,0,0,0,0,14,31,31],[31,31,14,0,0,0,0,0],[24,24,24,24,24,24,24,24],[3,3,3,3,3,3,3,3],[24,24,24,24,24,30,31,31],[3,3,3,3,3,15,31,31],[31,31,30,24,24,24,24,24],[31,31,15,3,3,3,3,3]],
+ [[0,0,0,0,0,4,14,31],[31,14,4,0,0,0,0,0],[16,24,24,24,24,24,24,16],[1,3,3,3,3,3,3,1],[16,24,24,24,24,28,30,31],[1,3,3,3,3,7,15,31],[31,30,28,24,24,24,24,16],[31,15,7,3,3,3,3,1]],
+ [[0,0,0,0,0,0,0,31],[31,0,0,0,0,0,0,0],[16,16,16,16,16,16,16,16],[1,1,1,1,1,1,1,1],[16,16,16,16,16,16,16,31],[1,1,1,1,1,1,1,31],[31,16,16,16,16,16,16,16],[31,1,1,1,1,1,1,1]],
+ [[0,0,0,0,0,21,0,21],[21,0,21,0,0,0,0,0],[16,0,16,0,16,0,16,0],[1,0,1,0,1,0,1,0],[16,0,16,0,16,21,0,21],[1,0,1,0,1,21,0,21],[21,0,21,0,16,0,16,0],[21,0,21,0,1,0,1,0]],
+ [[0,0,0,0,0,31,0,31],[31,0,31,0,0,0,0,0],[24,24,0,24,24,0,24,24],[3,3,0,3,3,0,3,3],[24,24,0,24,24,31,0,31],[3,3,0,3,3,31,0,31],[31,0,31,24,24,0,24,24],[31,0,31,3,3,0,3,3]]
+];
+function clockCell(d,r,c){
+ let seg=CLOCK_SEG[d]||0,a=seg&1,b=seg&2,cc=seg&4,dd=seg&8,e=seg&16,f=seg&32,g=seg&64;
+ if(r===0)return a?0:32;if(r===3)return dd?1:32;
+ if(r===1){if(c===0)return f&&g?4:f?2:g?0:32;if(c===1)return g?0:32;return b&&g?5:b?3:g?0:32}
+ if(c===0)return e&&g?6:e?2:g?1:32;if(c===1)return g?1:32;return cc&&g?7:cc?3:g?1:32
+}
+function previewCells(style,hm='12:34'){
+ let cells=Array(80).fill(32);
+ function digit(d,start){for(let r=0;r<4;r++)for(let x=0;x<3;x++)cells[r*20+start+x]=clockCell(d,r,x)}
+ digit(Number(hm[0]),1);digit(Number(hm[1]),5);cells[1*20+9]=58;cells[2*20+9]=58;digit(Number(hm[3]),11);digit(Number(hm[4]),15);
+ return {cells,custom:CLOCK_GLYPHS_JS[style]||CLOCK_GLYPHS_JS[0]};
+}
+function updateClockPreview(){let st=Number($('clockstyle').value),p=previewCells(st);drawLcd($('clockPreview'),p.cells,p.custom)}
+async function getState(){try{const s=await api('/api/state').then(r=>r.json());$('brand').textContent=s.device.name;document.title=s.device.name;$('fw').textContent='v'+s.firmware;$('fw2').textContent=s.firmware;$('temp').textContent=s.temperature_c==null?'--':s.temperature_c.toFixed(1);$('hum').textContent=s.humidity_pct==null?'--':s.humidity_pct.toFixed(1);$('alarmState').innerHTML=s.alarms.active?'<span class="alarm">ALLARME: '+esc(s.alarms.summary)+'</span>':'<span class="ok">Allarmi: '+(s.alarms.enabled?'OK':'disabilitati')+'</span>';$('status').textContent=(s.wifi.connected?'Wi‑Fi '+s.wifi.ssid+' · '+s.wifi.ip+' · '+s.wifi.rssi+' dBm':'Wi‑Fi non collegato')+(s.ap?' · AP '+s.device.name+' attivo':'')+' · MQTT '+(s.mqtt.connected?'connesso':'non connesso');drawLcd($('lcdCanvas'),s.lcd_matrix.cells,s.lcd_matrix.custom);let rr=s.rgb.r?255:0,gg=s.rgb.g?255:0,bb=s.rgb.b?255:0;$('rgbLed').style.background=`rgb(${rr},${gg},${bb})`;$('rgbText').textContent=s.rgb.meaning;$('timerState').textContent=s.timers.ncc_alarm?'Nomi Cose Città: tempo scaduto':s.timers.ncc_running?'Nomi Cose Città '+s.timers.ncc_letter+' · '+fmtMs(s.timers.ncc_remaining_ms):s.timers.countdown_alarm?'Countdown terminato':s.timers.countdown_running?'Countdown '+fmtMs(s.timers.countdown_remaining_ms):s.timers.stopwatch_running?'Cronometro '+fmtMs(s.timers.stopwatch_ms):'';$('keys').innerHTML=s.buttons.map(keyHtml).join('');$('scanstate').textContent=s.scan_running?'Scansione richiesta in corso…':'Scansione solo su richiesta';$('saved').innerHTML=s.saved.map((x,i)=>`<div class="net"><div class="grow">${esc(x)}</div><button class="danger" onclick="forgetWifi(${i})">Dimentica</button></div>`).join('')||'<p class="muted">Nessuna rete salvata</p>';
+$('diag').innerHTML=[['Uptime',fmtUptime(s.diag.uptime_s)],['Heap libero',s.diag.free_heap+' B'],['Heap minimo',s.diag.min_free_heap+' B'],['Reset',s.diag.reset_reason],['Wake-up',s.diag.wake_reason],['RSSI',s.wifi.connected?s.wifi.rssi+' dBm':'—'],['AP client',s.diag.ap_clients],['Sensore letto',s.diag.sensor_age_s+' s fa'],['mDNS',s.device.name+'.local'],['Modalità',s.mode],['Watchdog loop',s.diag.watchdog?'attivo':'non registrato']].map(x=>`<div class="muted">${esc(x[0])}</div><div>${esc(x[1])}</div>`).join('');
+if(!settingsLoaded){$('mqen').checked=s.mqtt.enabled;$('mqhost').value=s.mqtt.host;$('mqport').value=s.mqtt.port;$('mqtopic').value=s.mqtt.topic;$('mquser').value=s.mqtt.user;$('alen').checked=s.alarms.enabled;$('tmin').value=s.alarms.temp_min;$('tmax').value=s.alarms.temp_max;$('hmin').value=s.alarms.humidity_min;$('hmax').value=s.alarms.humidity_max;$('altopic').value=s.alarms.topic;$('devname').value=s.device.name;$('clockstyle').value=s.clock.style;updateClockPreview();settingsLoaded=true}if(Date.now()-lastHistory>60000){loadHistory();lastHistory=Date.now()}}catch(e){$('status').textContent='Pannello non raggiungibile: '+e.message}}
+function fmtUptime(v){let d=Math.floor(v/86400),h=Math.floor(v%86400/3600),m=Math.floor(v%3600/60);return `${d}g ${h}h ${m}m`}function fmtMs(ms){let t=Math.max(0,Math.floor(ms/1000)),h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60;return [h,m,s].map(x=>String(x).padStart(2,"0")).join(":")}
+async function press(n){await api('/api/button?id='+n,{method:'POST'});setTimeout(getState,100)}
+async function scan(){await api('/api/wifi/scan',{method:'POST'});$('nets').innerHTML='';pollScan()}
+async function pollScan(){try{const d=await api('/api/wifi/networks').then(r=>r.json());$('scanstate').textContent=d.running?'Scansione richiesta in corso…':'Scansione completata';$('nets').innerHTML=d.networks.map((n,i)=>`<div class="net"><div class="grow"><b>${esc(n.ssid)}</b><br><span class="muted">${n.rssi} dBm · ${n.open?'aperta':'protetta'}</span></div><button onclick="joinWifi(${i},${n.open})">Collega</button></div>`).join('');if(d.running)setTimeout(pollScan,700)}catch(e){$('scanstate').textContent=e.message}}
+async function joinWifi(i,open){let p=open?'':prompt('Password Wi‑Fi:','');if(p===null)return;let body=new URLSearchParams({index:i,password:p});alert(await api('/api/wifi/connect',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body}).then(r=>r.text()))}
+async function forgetWifi(i){if(!confirm('Dimenticare questa rete?'))return;await api('/api/wifi/forget?index='+i,{method:'POST'});settingsLoaded=false;getState()}
+$('mqttForm').onsubmit=async e=>{e.preventDefault();let body=new URLSearchParams({enabled:$('mqen').checked?'1':'0',host:$('mqhost').value,port:$('mqport').value,topic:$('mqtopic').value,user:$('mquser').value,pass:$('mqpass').value});$('mqmsg').textContent=await api('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body}).then(r=>r.text());$('mqpass').value='';settingsLoaded=false;getState()}
+$('alarmForm').onsubmit=async e=>{e.preventDefault();let body=new URLSearchParams({enabled:$('alen').checked?'1':'0',tmin:$('tmin').value,tmax:$('tmax').value,hmin:$('hmin').value,hmax:$('hmax').value,topic:$('altopic').value});$('almsg').textContent=await api('/api/alarms',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body}).then(r=>r.text());settingsLoaded=false;getState()}
+$('nameForm').onsubmit=async e=>{e.preventDefault();if(!confirm('Salvare il nuovo nome e riavviare la stazione?'))return;let body=new URLSearchParams({name:$('devname').value});await api('/api/device',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});setTimeout(()=>location.reload(),5000)}
+$('clockstyle').onchange=updateClockPreview;
+$('clockForm').onsubmit=async e=>{e.preventDefault();let body=new URLSearchParams({style:$('clockstyle').value});$('clockmsg').textContent=await api('/api/clockstyle',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body}).then(r=>r.text());settingsLoaded=false;getState()}
+async function backupConfig(){location.href='/api/config/backup'}
+async function restoreConfig(){let f=$('restoreFile').files[0];if(!f){$('restoreMsg').textContent='Seleziona un file JSON';return}if(!confirm('Il ripristino sostituirà configurazione e reti salvate e riavvierà il dispositivo. Continuare?'))return;let txt=await f.text();try{$('restoreMsg').textContent=await api('/api/config/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:txt}).then(r=>r.text());setTimeout(()=>location.reload(),5000)}catch(e){$('restoreMsg').textContent=e.message}}
+async function loadLog(){try{let d=await api('/api/log').then(r=>r.json());$('log').innerHTML=d.entries.map(x=>`<div><span class="muted">+${Math.floor(x.ms/1000)}s</span> ${esc(x.text)}</div>`).join('')||'<div>Nessun evento</div>'}catch(e){$('log').textContent=e.message}}
+async function clearLog(){if(!confirm('Cancellare il log eventi in RAM?'))return;await api('/api/log/clear',{method:'POST'});loadLog()}
+async function loadHistory(){try{let d=await api('/api/history').then(r=>r.json());drawChart(d.points)}catch(e){}}
+function drawChart(p){let c=$('chart'),r=c.getBoundingClientRect(),dpr=devicePixelRatio||1;c.width=Math.max(1,r.width*dpr);c.height=Math.max(1,r.height*dpr);let x=c.getContext('2d');x.scale(dpr,dpr);let w=r.width,h=r.height;x.clearRect(0,0,w,h);if(p.length<2){x.fillStyle=getComputedStyle(document.body).color;x.fillText('Storico non ancora sufficiente',12,24);return}let ts=p.map(a=>a.t),hs=p.map(a=>a.h),all=ts.concat(hs),mn=Math.min(...all),mx=Math.max(...all);if(mx-mn<5){mx+=2.5;mn-=2.5}let py=v=>h-20-(v-mn)/(mx-mn)*(h-40),px=i=>10+i/(p.length-1)*(w-20);let cs=getComputedStyle(document.documentElement);x.strokeStyle=cs.getPropertyValue('--line');x.beginPath();for(let i=0;i<5;i++){let y=20+i*(h-40)/4;x.moveTo(10,y);x.lineTo(w-10,y)}x.stroke();function line(vals,col){x.strokeStyle=col;x.lineWidth=2;x.beginPath();vals.forEach((v,i)=>i?x.lineTo(px(i),py(v)):x.moveTo(px(i),py(v)));x.stroke()}line(ts,cs.getPropertyValue('--bad'));line(hs,cs.getPropertyValue('--accent'));x.fillStyle=cs.getPropertyValue('--muted');x.fillText('Temperatura',12,14);x.fillText('Umidità',100,14)}
+window.addEventListener('resize',()=>loadHistory());
+$('otaForm').onsubmit=e=>{e.preventDefault();let f=$('fwfile').files[0];if(!f)return;let fd=new FormData();fd.append('update',f);$('otaMsg').textContent='Caricamento…';let x=new XMLHttpRequest();x.open('POST','/update');x.upload.onprogress=v=>{if(v.lengthComputable)$('otaMsg').textContent='Caricamento '+Math.round(v.loaded/v.total*100)+'%'};x.onload=()=>$('otaMsg').textContent=x.responseText;x.send(fd)};
+(()=>{const blank=Array(80).fill(32);const hello="stazionemeteo";for(let i=0;i<hello.length&&i<20;i++)blank[i]=hello.charCodeAt(i);drawLcd($("lcdCanvas"),blank,[]);updateClockPreview();})();
+getState();loadLog();loadHistory();setInterval(getState,1000);
+</script></body></html>

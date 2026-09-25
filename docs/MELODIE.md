@@ -1,6 +1,6 @@
-# Catalogo melodie
+# Catalogo melodie · 2.5.1
 
-Le 37 voci del catalogo nel firmware, nello stesso ordine del menu. I titoli sono riportati come presenti nel sorgente; il display ne mostra solo i primi 20 caratteri, incluso il cursore di selezione.
+Le 37 voci del catalogo nel firmware, nello stesso ordine del menu. I titoli sono riportati come presenti nel sorgente; il display gestisce lo scorrimento dei testi lunghi.
 
 1. Cantina Band from Star Wars
 2. Imperial March from Star Wars
@@ -40,4 +40,4 @@ Le 37 voci del catalogo nel firmware, nello stesso ordine del menu. I titoli son
 36. We Wish You a Merry Christmas
 37. Silent Night
 
-P3 avvia il brano, P4 lo interrompe. P1 e P2 modificano il tempo. I nomi e le composizioni appartengono ai rispettivi titolari; la presenza del catalogo non costituisce una licenza sui brani.
+Dalla home P2 apre il catalogo; P1/P2 scorrono i brani e P3 avvia la riproduzione. Durante la riproduzione P1/P2 cambiano il tempo di 20 BPM (limiti 40–300); P4 interrompe. Il tempo viene salvato per ogni brano. Il player è non bloccante e si controlla anche dai quattro tasti della dashboard. I nomi e le composizioni appartengono ai rispettivi titolari; la presenza del catalogo non costituisce una licenza sui brani.
